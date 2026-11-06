@@ -13,7 +13,7 @@ use std::sync::Arc;
 fn main() {
     util::exit_on_sigterm();
     let config = Arc::new(config::Config::from_env());
-    let state = Arc::new(server::State::default());
+    let state = Arc::new(server::State::new(config.demo));
     snapshot::start(config.clone(), state.clone()); // background threads
     server::run(&config, state); // blocks forever
 }

@@ -109,6 +109,14 @@ impl Default for Demo {
                 (733, "dockerd", "root", walk(1.5, 0.2, 6.0, 0.6), 0.4),
                 (8814, "immich", "1000", walk(1.2, 0.0, 16.0, 2.0), 2.2),
                 (1301, "smbd", "root", walk(0.8, 0.0, 9.0, 1.0), 0.1),
+                (1, "systemd", "root", walk(0.1, 0.0, 0.5, 0.1), 0.04),
+                (612, "sshd", "root", walk(0.0, 0.0, 0.2, 0.05), 0.03),
+                (655, "cron", "root", walk(0.0, 0.0, 0.1, 0.02), 0.01),
+                (702, "tailscaled", "root", walk(0.3, 0.0, 2.0, 0.3), 0.15),
+                (5120, "nas-dashboard", "10001", walk(0.2, 0.1, 0.4, 0.05), 0.0),
+                (690, "containerd", "root", walk(0.6, 0.1, 3.0, 0.4), 0.2),
+                (733001, "kworker/2:1", "root", walk(0.0, 0.0, 0.3, 0.05), 0.0),
+                (1450, "php-fpm8.4", "999", walk(0.4, 0.0, 4.0, 0.6), 0.1),
             ],
             rng,
         }
@@ -169,14 +177,21 @@ impl Demo {
                 })
             })
             .collect();
-        let mut processes: Vec<Value> = self
+        let processes: Vec<Value> = self
             .processes
             .iter_mut()
             .map(|(pid, name, user, cpu, mem)| {
                 json!({ "pid": pid, "name": name, "user": user, "cpu": (cpu.next(rng) * (1.0 + 2.5 * s) * 10.0).round() / 10.0, "mem": mem })
             })
             .collect();
-        processes.sort_by(|a, b| b["cpu"].as_f64().unwrap_or(0.0).total_cmp(&a["cpu"].as_f64().unwrap_or(0.0)));
+        // Highest and lowest 8 by CPU and by RAM, like the real collector sends.
+        let order = |key: &str| {
+            let mut sorted: Vec<&Value> = processes.iter().collect();
+            sorted.sort_by(|a, b| b[key].as_f64().unwrap_or(0.0).total_cmp(&a[key].as_f64().unwrap_or(0.0)));
+            let pids = |list: Vec<&&Value>| list.iter().map(|p| p["pid"].clone()).collect::<Vec<_>>();
+            json!({ "desc": pids(sorted.iter().take(8).collect()), "asc": pids(sorted.iter().rev().take(8).collect()) })
+        };
+        let process_order = json!({ "cpu": order("cpu"), "mem": order("mem") });
 
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
         self.watched = (self.watched + 0.05) % 100.0;
@@ -215,7 +230,7 @@ impl Demo {
             },
             "disks": { "ok": true, "items": disks },
             "docker": { "ok": true, "containers": containers },
-            "processes": { "ok": true, "items": processes },
+            "processes": { "ok": true, "items": processes, "order": process_order },
             "jellyfin": { "ok": true, "streams": [
                 { "user": "anna", "title": "Severance · S02E03", "device": "Apple TV", "method": "DirectPlay", "bitrate": 18_400_000, "paused": false,
                   "progress": ((42.0 + self.watched) % 100.0 * 10.0).round() / 10.0, "reason": null },
@@ -225,4 +240,46 @@ impl Demo {
             "minecraft": { "ok": true, "online": true, "players": players, "names": &names[..players], "max": 20, "version": "1.21.4" },
         })
     }
+}
+
+/// Fake details for the demo's info box.
+#[allow(clippy::type_complexity)] // a plain table is the clearest way to write demo data
+pub fn process_details(pid: u32) -> Option<Value> {
+    // pid, name, user, state, parent pid + name, threads, nice, RSS, virtual, running for, command
+    const GIB: u64 = 1 << 30;
+    const MIB: u64 = 1 << 20;
+    let table: &[(u32, &str, &str, &str, u32, &str, u64, i64, u64, u64, u64, &str)] = &[
+        (412233, "ffmpeg", "jellyfin", "running", 1120, "jellyfin", 14, 0, 312 * MIB, 2 * GIB, 1460,
+         "/usr/lib/jellyfin-ffmpeg/ffmpeg -analyzeduration 200M -i file:/data/media/movies/Dune Part Two (2024)/Dune.mkv -map_metadata -1 -codec:v:0 libx264 -preset veryfast -crf 23 -maxrate 8000000 -codec:a:0 aac -ac 2 -f hls /cache/transcodes/7f3a.m3u8"),
+        (1883, "java", "minecraft", "sleeping", 1850, "crafty", 87, 0, 3 * GIB, 13 * GIB, 518400,
+         "java -Xms10G -Xmx10G -XX:+UseG1GC -XX:+ParallelRefProcEnabled -jar server.jar nogui"),
+        (1120, "jellyfin", "jellyfin", "sleeping", 1098, "containerd-shim", 42, 0, 780 * MIB, 4 * GIB, 518400,
+         "/jellyfin/jellyfin --datadir /config --cachedir /cache --ffmpeg /usr/lib/jellyfin-ffmpeg/ffmpeg"),
+        (911, "mergerfs", "root", "sleeping", 1, "systemd", 6, 0, 90 * MIB, 600 * MIB, 2006000,
+         "mergerfs pool:596a9dc6-f833-4973-a553 /srv/mergerfs/pool -o rw,branches=/srv/dev-disk-by-uuid-c632c2a4:/srv/dev-disk-by-uuid-8157dc73"),
+        (2290, "qbittorrent-nox", "1000", "sleeping", 2250, "containerd-shim", 18, 0, 250 * MIB, MIB * 1800, 172800,
+         "/app/qbittorrent-nox --webui-port=8080 --profile=/config"),
+        (733, "dockerd", "root", "sleeping", 1, "systemd", 31, 0, 120 * MIB, 3 * GIB, 2006000,
+         "/usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock"),
+        (8814, "immich", "1000", "sleeping", 8790, "containerd-shim", 23, 0, 700 * MIB, 3 * GIB, 518400, "immich"),
+        (1301, "smbd", "root", "sleeping", 1, "systemd", 1, 0, 30 * MIB, 200 * MIB, 2006000, "/usr/sbin/smbd --foreground --no-process-group"),
+        (1, "systemd", "root", "sleeping", 0, "", 1, 0, 12 * MIB, 160 * MIB, 2006000, "/sbin/init"),
+        (612, "sshd", "root", "sleeping", 1, "systemd", 1, 0, 8 * MIB, 15 * MIB, 2006000, "sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups"),
+        (655, "cron", "root", "sleeping", 1, "systemd", 1, 0, 3 * MIB, 7 * MIB, 2006000, "/usr/sbin/cron -f"),
+        (702, "tailscaled", "root", "sleeping", 680, "containerd-shim", 19, 0, 50 * MIB, MIB * 1300, 2006000,
+         "tailscaled --socket=/tmp/tailscaled.sock --statedir=/var/lib/tailscale --authkey=tskey-auth-k1234 --tun=userspace-networking"),
+        (5120, "nas-dashboard", "10001", "sleeping", 5100, "containerd-shim", 7, 0, MIB, 6 * MIB, 10800, "/nas-dashboard"),
+        (690, "containerd", "root", "sleeping", 1, "systemd", 24, 0, 60 * MIB, 2 * GIB, 2006000, "/usr/bin/containerd"),
+        (733001, "kworker/2:1", "root", "idle", 2, "kthreadd", 1, 0, 0, 0, 3400, ""),
+        (1450, "php-fpm8.4", "999", "sleeping", 1440, "php-fpm8.4", 1, 0, 40 * MIB, 300 * MIB, 2006000, "php-fpm: pool www"),
+    ];
+    let &(pid, name, user, state, ppid, parent, threads, nice, rss, virt, running_for, command) = table.iter().find(|row| row.0 == pid)?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    Some(json!({
+        "pid": pid, "name": name, "user": user, "state": state, "ppid": ppid,
+        "parent": if parent.is_empty() { None } else { Some(parent) },
+        "nice": nice, "threads": threads, "rss": rss, "virt": virt,
+        "started": now - running_for, "running_for": running_for,
+        "command": if command.is_empty() { None } else { Some(crate::collectors::processes::redact(command)) },
+    }))
 }

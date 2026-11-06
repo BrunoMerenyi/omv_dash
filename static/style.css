@@ -36,6 +36,8 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
+/* Nothing may make the page wider than the screen (e.g. the info box while rotating a phone). */
+html { overflow-x: clip; }
 
 body {
   background: var(--bg);
@@ -282,6 +284,47 @@ table.fixed .name { max-width: none; width: auto; }
 .w-mem { width: 88px; }
 .w-user { width: 92px; }
 .w-pct { width: 64px; }
+
+/* ---------- Processes: sortable headers + info box ---------- */
+
+button.sort {
+  all: unset; cursor: pointer; color: inherit; text-transform: inherit;
+  display: inline-flex; justify-content: flex-end; gap: 2px; border-radius: 3px;
+}
+button.sort:hover, button.sort.on { color: var(--text); }
+button.sort:focus-visible { outline: 1px solid var(--muted); outline-offset: 2px; }
+button.sort .arrow { display: inline-block; width: 1.2ch; text-align: right; }
+.procs tbody tr { cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.procs tbody tr:hover td, .procs tbody tr.active td { background: #0c0d10; }
+.procs tbody tr:focus-visible { outline: 1px solid var(--muted); outline-offset: -1px; }
+
+/* Placed in page coordinates (scrolls with the page) and moved with transform,
+   which makes gliding a cheap, smooth GPU animation. */
+.pinfo {
+  position: absolute; left: 0; top: 0; z-index: 20; width: min(460px, calc(100vw - 24px));
+  opacity: 0; transform: translate(var(--x, 0), var(--y, 0)) scale(.97); transform-origin: top left;
+  transition: transform .15s cubic-bezier(.2, .8, .2, 1), opacity .1s ease-out;
+  will-change: transform;
+  background: #0b0c0e; border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 12px 14px 10px; font-size: 12px; box-shadow: 0 16px 40px rgba(0, 0, 0, .7);
+}
+.pinfo.show { opacity: 1; transform: translate(var(--x, 0), var(--y, 0)); }
+.pinfo.instant { transition: none; }
+@media (prefers-reduced-motion: reduce) { .pinfo { transition: opacity .1s ease-out; } }
+.pi-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.pi-head b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pi-head .muted { color: var(--faint); font-size: 11px; white-space: nowrap; }
+.pi-grid { display: grid; grid-template-columns: 8ch minmax(0, 1fr) 8ch minmax(0, 1fr); gap: 5px 12px; margin: 0; }
+.pi-grid dt { color: var(--faint); }
+.pi-grid dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pi-grid .muted { color: var(--faint); }
+.pi-cmd {
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-soft);
+  color: var(--muted); font-size: 11px; line-height: 1.55; word-break: break-all;
+  display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden;
+  height: calc(1.55em * 5 + 11px); /* always 5 lines tall, so the box never changes size */
+}
+.pi-hint { margin-top: 8px; color: var(--faint); font-size: 10px; }
 
 /* ---------- Jellyfin ---------- */
 

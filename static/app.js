@@ -266,6 +266,7 @@ function setupTooltip(svg, format) {
 }
 
 setupSparkTips();
+setupProcInfo();
 setupTooltip($("cpu-graph"), ([total]) => `Total ${hot(total, fmt.pct(total))}`);
 setupTooltip($("net-graph"), ([down, up]) =>
   `<div style="color:var(--net-down)">↓ ${fmt.rate(down)}</div><div style="color:var(--net-up)">↑ ${fmt.rate(up)}</div>`);
@@ -486,14 +487,204 @@ function renderStorage(pool, disks, limits) {
   slideSparks($("disks"));
 }
 
+// ---------- Processes: sort by cpu / ram, info box on hover or tap (like btop) ----------
+
+const procSort = loadProcSort(); // { key: "cpu" | "mem", dir: "desc" | "asc" }
+let lastProcesses = null;
+
+function loadProcSort() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("procSort"));
+    if (saved && ["cpu", "mem"].includes(saved.key) && ["asc", "desc"].includes(saved.dir)) return saved;
+  } catch { /* private window or blocked storage: use the default */ }
+  return { key: "cpu", dir: "desc" };
+}
+
 function renderProcesses(p) {
-  card("processes", p, () => `<table class="fixed"><thead><tr>
-      <th>Name</th><th class="w-user">User</th><th class="num w-cpu" title="100 % = one full CPU thread">CPU</th><th class="num w-pct">RAM</th></tr></thead><tbody>
-    ${p.items.map((x) => `<tr><td class="name" title="PID ${x.pid}">${esc(x.name)}</td>
+  lastProcesses = p;
+  const arrow = procSort.dir === "desc" ? "↓" : "↑";
+  $("proc-sort").textContent = `by ${procSort.key === "cpu" ? "cpu" : "ram"} ${arrow}`;
+  card("processes", p, () => {
+    const byPid = new Map(p.items.map((x) => [x.pid, x]));
+    const pids = p.order ? p.order[procSort.key][procSort.dir] : p.items.map((x) => x.pid);
+    const head = (key, label, cls, title) => {
+      const on = procSort.key === key;
+      return `<th class="num ${cls}" aria-sort="${on ? (procSort.dir === "desc" ? "descending" : "ascending") : "none"}">` +
+        `<button class="sort${on ? " on" : ""}" data-sort="${key}" title="${title}">${label}<span class="arrow">${on ? arrow : ""}</span></button></th>`;
+    };
+    return `<table class="fixed procs"><thead><tr><th>name</th><th class="w-user">user</th>
+      ${head("cpu", "cpu", "w-cpu", "Sort by CPU (100 % = one full thread). Click again to reverse.")}
+      ${head("mem", "ram", "w-pct", "Sort by RAM. Click again to reverse.")}</tr></thead><tbody>
+    ${pids.map((pid) => byPid.get(pid)).filter(Boolean).map((x) => `<tr data-pid="${x.pid}" tabindex="0"${x.pid === procInfo.pid ? ' class="active"' : ""}>
+      <td class="name">${esc(x.name)}</td>
       <td class="muted ellipsis">${esc(x.user ?? "–")}</td>
       <td class="num">${hot(x.cpu, `${x.cpu.toFixed(1)} %`)}</td>
       <td class="num">${x.mem != null ? `${x.mem.toFixed(1)} %` : "–"}</td></tr>`).join("")}
-    </tbody></table>`);
+    </tbody></table>`;
+  });
+  refreshProcInfo();
+}
+
+// Info box: hover a row (mouse) or tap it (touch). Clicking pins it open;
+// Esc or a click elsewhere closes it. Details come from /api/process/<pid>.
+const procInfo = { pid: null, pinned: false, data: null, fetchedAt: 0, timer: 0, move: false };
+
+function setupProcInfo() {
+  document.body.insertAdjacentHTML("beforeend", '<div class="pinfo" hidden role="dialog" aria-label="Process details"></div>');
+  const box = document.querySelector(".pinfo");
+  const table = $("processes");
+  const rowOf = (event) => event.target.closest && event.target.closest("tr[data-pid]");
+
+  table.addEventListener("click", (event) => {
+    const button = event.target.closest("button.sort");
+    if (button) {
+      const key = button.dataset.sort;
+      procSort.dir = procSort.key === key && procSort.dir === "desc" ? "asc" : "desc";
+      procSort.key = key;
+      try { localStorage.setItem("procSort", JSON.stringify(procSort)); } catch { /* not important */ }
+      if (lastProcesses) renderProcesses(lastProcesses);
+      return;
+    }
+    const row = rowOf(event);
+    if (!row) return;
+    const pid = Number(row.dataset.pid);
+    if (procInfo.pinned && procInfo.pid === pid) return closeProcInfo();
+    procInfo.pinned = true;
+    openProcInfo(pid);
+  });
+  table.addEventListener("keydown", (event) => {
+    const row = rowOf(event);
+    if (row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); row.click(); }
+  });
+  table.addEventListener("pointerover", (event) => {
+    const row = rowOf(event);
+    if (event.pointerType !== "mouse" || procInfo.pinned || !row) return;
+    clearTimeout(procInfo.timer);
+    procInfo.timer = setTimeout(() => openProcInfo(Number(row.dataset.pid)), 40);
+  });
+  const leave = (event) => {
+    if (event.pointerType !== "mouse" || procInfo.pinned) return;
+    clearTimeout(procInfo.timer);
+    procInfo.timer = setTimeout(closeProcInfo, 150);
+  };
+  table.addEventListener("pointerleave", leave);
+  box.addEventListener("pointerleave", leave);
+  box.addEventListener("pointerenter", () => clearTimeout(procInfo.timer));
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeProcInfo(); });
+  document.addEventListener("pointerdown", (event) => {
+    if (procInfo.pinned && !event.target.closest(".pinfo, #processes")) closeProcInfo();
+  });
+  window.addEventListener("resize", () => procInfo.pid !== null && placeProcInfo(true));
+}
+
+function openProcInfo(pid) {
+  if (procInfo.pid !== pid) {
+    procInfo.data = null;
+    procInfo.move = true; // a different process: go to its row (once, even if kept open)
+  }
+  procInfo.pid = pid;
+  procInfo.fetchedAt = 0;
+  refreshProcInfo();
+}
+
+function closeProcInfo() {
+  clearTimeout(procInfo.timer);
+  Object.assign(procInfo, { pid: null, pinned: false, data: null });
+  const box = document.querySelector(".pinfo");
+  box.classList.remove("show"); // fade out, then take it out of the page
+  setTimeout(() => { if (procInfo.pid === null) box.hidden = true; }, 160);
+  document.querySelectorAll("#processes tr.active").forEach((r) => r.classList.remove("active"));
+}
+
+/** Called after every update: re-anchor the box, reload details every 2 s. */
+function refreshProcInfo() {
+  if (procInfo.pid === null) return;
+  document.querySelectorAll("#processes tr[data-pid]").forEach((r) => r.classList.toggle("active", Number(r.dataset.pid) === procInfo.pid));
+  drawProcInfo();
+  if (Date.now() - procInfo.fetchedAt < 2000) return;
+  procInfo.fetchedAt = Date.now();
+  const pid = procInfo.pid;
+  fetch(`/api/process/${pid}`)
+    .then((r) => (r.ok ? r.json() : { gone: true }))
+    .catch(() => ({ gone: true }))
+    .then((data) => { if (procInfo.pid === pid) { procInfo.data = data; drawProcInfo(); } });
+}
+
+const PROC_STATE_LEVEL = { running: "ok", "waiting for disk": "warn", zombie: "crit", stopped: "warn" };
+
+function drawProcInfo() {
+  const box = document.querySelector(".pinfo");
+  const gone = procInfo.data && procInfo.data.gone;
+  const d = procInfo.data && !gone ? procInfo.data : null; // null while loading
+  const live = lastProcesses && lastProcesses.items.find((x) => x.pid === procInfo.pid);
+  const name = (d && d.name) || (live && live.name) || "–";
+  const pair = (k, v) => `<dt>${k}</dt><dd>${v ?? "–"}</dd>`;
+  const level = d && PROC_STATE_LEVEL[d.state];
+  const started = d && new Date(d.started * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const command = gone ? '<span class="muted">This process has ended.</span>'
+    : !d ? '<span class="muted">loading …</span>'
+    : d.command ? esc(d.command) : '<span class="muted">kernel thread (no command line)</span>';
+  // Always the same rows and a fixed-height command area, so the box never
+  // changes size (a size change would re-centre it and look like a jump).
+  box.innerHTML = `<div class="pi-head"><b>${esc(name)}</b><span class="muted">pid ${procInfo.pid}</span></div>
+    <dl class="pi-grid">
+      ${pair("state", d ? (level ? `<span class="state lvl-${level}">${esc(d.state)}</span>` : `<span class="muted">${esc(d.state)}</span>`) : null)}
+      ${pair("threads", d && fmt.num(d.threads))}
+      ${pair("cpu", live && hot(live.cpu, `${live.cpu.toFixed(1)} %`))}
+      ${pair("nice", d && d.nice)}
+      ${pair("memory", d && `${fmt.gib(d.rss)}${live && live.mem != null ? ` <span class="muted">· ${live.mem.toFixed(1)} %</span>` : ""}`)}
+      ${pair("virtual", d && fmt.gib(d.virt))}
+      ${pair("user", d ? esc(d.user ?? "–") : live && esc(live.user ?? "–"))}
+      ${pair("parent", d && d.parent && `${esc(d.parent)} <span class="muted">${d.ppid}</span>`)}
+      ${pair("started", started)}
+      ${pair("running", d && fmt.uptime(d.running_for))}
+    </dl>
+    <div class="pi-cmd">${command}</div>
+    <div class="pi-hint">${procInfo.pinned ? "kept open · esc or click elsewhere to close" : "click the row to keep this open"}</div>`;
+  if (box.hidden || !box.classList.contains("show")) {
+    // Opening: appear in place (no glide from an old spot), then fade in.
+    box.hidden = false;
+    placeProcInfo(true);
+    box.offsetWidth; // let the browser see the starting state, so the fade-in still plays
+    box.classList.add("show"); // (no requestAnimationFrame: some browsers skip frames and it never showed)
+  } else if (!procInfo.pinned || procInfo.move) {
+    placeProcInfo(); // kept open = frozen where it is; only the values update
+  }
+  procInfo.move = false;
+}
+
+/**
+ * Put the box beside the Processes panel, vertically centred on its row
+ * (right side, or left if there is no room). On narrow screens it goes under
+ * the row instead. Positions are in page coordinates, so the box scrolls with
+ * the page like a panel. It glides to new positions (CSS transition on
+ * transform: done by the graphics chip, no layout work); `instant` skips that.
+ */
+function placeProcInfo(instant = false) {
+  const box = document.querySelector(".pinfo");
+  const row = document.querySelector(`#processes tr[data-pid="${procInfo.pid}"]`);
+  const anchor = (row || $("processes")).getBoundingClientRect();
+  const panel = $("processes").closest(".card").getBoundingClientRect();
+  const width = box.offsetWidth, height = box.offsetHeight, gap = 12;
+  const pageHeight = document.documentElement.scrollHeight;
+  let left, top;
+  if (panel.right + gap + width <= innerWidth - gap) left = panel.right + gap;      // beside, right
+  else if (panel.left - gap - width >= gap) left = panel.left - gap - width;       // beside, left
+  if (left !== undefined) {
+    top = scrollY + anchor.top + anchor.height / 2 - height / 2;
+  } else {
+    left = Math.min(Math.max(gap, anchor.left), innerWidth - width - gap);         // narrow screen
+    top = scrollY + anchor.bottom + 6;
+    if (top + height > pageHeight - 8) top = scrollY + anchor.top - height - 6;
+  }
+  top = Math.min(Math.max(8, top), pageHeight - height - 8);
+  if (instant) box.classList.add("instant");
+  box.style.setProperty("--x", `${Math.round(left + scrollX)}px`);
+  box.style.setProperty("--y", `${Math.round(top)}px`);
+  if (instant) {
+    box.offsetWidth; // apply the jump before the transition comes back
+    box.classList.remove("instant");
+  }
 }
 
 function renderJellyfin(j) {

@@ -21,6 +21,7 @@ const MAX_CLIENTS: usize = 32;
 /// Everything the collectors share with the web server.
 #[derive(Default)]
 pub struct State {
+    pub demo: bool,
     latest: Mutex<Arc<String>>,
     history: Mutex<History>,
     clients: Mutex<Vec<TcpStream>>,
@@ -43,6 +44,10 @@ fn push(list: &mut VecDeque<f64>, value: f64) {
 }
 
 impl State {
+    pub fn new(demo: bool) -> Self {
+        State { demo, ..Default::default() }
+    }
+
     /// Store a new snapshot and send it to every open page.
     pub fn publish(&self, snapshot: &Value) {
         {
@@ -160,6 +165,15 @@ fn handle(mut stream: TcpStream, state: &State) -> io::Result<()> {
             reply("200 OK", "application/json", latest.as_bytes(), None)
         }
         "/health" => reply("200 OK", "application/json", b"{\"ok\":true}", None),
+        // Details for the process info box, read on demand (only digits are accepted).
+        _ if path.starts_with("/api/process/") => {
+            let pid = path["/api/process/".len()..].parse::<u32>().ok();
+            let info = pid.and_then(|pid| if state.demo { crate::demo::process_details(pid) } else { crate::collectors::processes::details(pid) });
+            match info {
+                Some(info) => reply("200 OK", "application/json", info.to_string().as_bytes(), None),
+                None => reply("404 Not Found", "application/json", b"{\"error\":\"no such process\"}", None),
+            }
+        }
         _ => match ASSETS.iter().find(|a| a.path == path) {
             Some(asset) => {
                 let etag = format!("\"{:x}\"", fnv(asset.body));
@@ -305,7 +319,10 @@ mod tests {
         let page = request(state.clone(), "GET / HTTP/1.1\r\nHost: x\r\n\r\n");
         assert!(page.starts_with("HTTP/1.1 200 OK") && page.contains("<html"));
         assert!(request(state.clone(), "POST /api/snapshot HTTP/1.1\r\n\r\n").starts_with("HTTP/1.1 405"));
-        assert!(request(state, "GET /nope HTTP/1.1\r\n\r\n").starts_with("HTTP/1.1 404"));
+        assert!(request(state.clone(), "GET /nope HTTP/1.1\r\n\r\n").starts_with("HTTP/1.1 404"));
+        assert!(request(state.clone(), "GET /api/process/../etc HTTP/1.1\r\n\r\n").starts_with("HTTP/1.1 404"));
+        let me = request(state, &format!("GET /api/process/{} HTTP/1.1\r\n\r\n", std::process::id()));
+        assert!(!cfg!(target_os = "linux") || me.contains("\"threads\""));
     }
 
     #[test]
