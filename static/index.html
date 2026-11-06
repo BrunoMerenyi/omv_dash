@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#000000">
   <title>OMV Dashboard</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preload" href="fonts/JetBrainsMono.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -13,7 +14,7 @@
   <header class="topbar">
     <div class="brand">
       <h1 id="title"></h1>
-      <span id="demo" class="tag" hidden>DEMO</span>
+      <span id="demo" class="tag" hidden>demo</span>
     </div>
     <dl class="meta">
       <div><dt>IP</dt><dd id="ip">–</dd></div>
@@ -21,7 +22,7 @@
     </dl>
     <div class="status-wrap">
       <div id="status" class="status" role="status" aria-live="polite">–</div>
-      <div id="conn" class="conn">Connecting …</div>
+      <div id="conn" class="conn">connecting …</div>
     </div>
   </header>
 
@@ -114,9 +115,16 @@
 
   <!-- Shared colour gradient for the per-disk IO graphs: green at the bottom, red at the top -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-    <defs><linearGradient id="io-heat" gradientUnits="userSpaceOnUse" x1="0" y1="20" x2="0" y2="0">
-      <stop offset="0" stop-color="hsl(130 70% 65%)"/><stop offset=".5" stop-color="hsl(65 70% 65%)"/><stop offset="1" stop-color="hsl(0 70% 65%)"/>
-    </linearGradient></defs>
+    <defs>
+      <linearGradient id="io-heat" gradientUnits="userSpaceOnUse" x1="0" y1="20" x2="0" y2="0">
+        <stop offset="0" stop-color="hsl(130 70% 65%)"/><stop offset=".5" stop-color="hsl(65 70% 65%)"/><stop offset="1" stop-color="hsl(0 70% 65%)"/>
+      </linearGradient>
+      <!-- Fill under every graph line: strongest at the top of the shape, fading out downwards -->
+      <linearGradient id="fade-grad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#fff" style="stop-opacity: var(--graph-fill)"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+      </linearGradient>
+      <mask id="fade" maskContentUnits="objectBoundingBox"><rect width="1" height="1" fill="url(#fade-grad)"/></mask>
+    </defs>
   </svg>
   <script src="app.js"></script>
 </body>

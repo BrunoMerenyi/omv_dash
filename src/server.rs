@@ -8,7 +8,7 @@
 use crate::config::Config;
 use crate::util::{lock, round1};
 use serde_json::{json, Value};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -31,6 +31,8 @@ struct History {
     cpu: VecDeque<f64>,
     down: VecDeque<f64>,
     up: VecDeque<f64>,
+    disks: BTreeMap<String, VecDeque<f64>>, // IO busy % per disk
+    temps: BTreeMap<String, VecDeque<f64>>, // "cpu", "board", "disk", "fan:<label>"
 }
 
 fn push(list: &mut VecDeque<f64>, value: f64) {
@@ -48,6 +50,21 @@ impl State {
             push(&mut h.cpu, snapshot["cpu"]["percent"].as_f64().unwrap_or(0.0));
             push(&mut h.down, snapshot["network"]["down"].as_f64().unwrap_or(0.0));
             push(&mut h.up, snapshot["network"]["up"].as_f64().unwrap_or(0.0));
+            for disk in snapshot["disks"]["items"].as_array().into_iter().flatten() {
+                if let Some(name) = disk["name"].as_str() {
+                    push(h.disks.entry(name.to_string()).or_default(), disk["busy"].as_f64().unwrap_or(0.0));
+                }
+            }
+            let t = &snapshot["temps"];
+            let mut readings = vec![("cpu".to_string(), t["cpu"].as_f64()), ("board".to_string(), t["board"].as_f64()), ("disk".to_string(), t["disk"]["temp"].as_f64())];
+            for fan in t["fans"].as_array().into_iter().flatten() {
+                readings.push((format!("fan:{}", fan["label"].as_str().unwrap_or("?")), fan["rpm"].as_f64()));
+            }
+            for (key, value) in readings {
+                if let Some(value) = value {
+                    push(h.temps.entry(key).or_default(), value);
+                }
+            }
         }
         let text = Arc::new(snapshot.to_string());
         *lock(&self.latest) = text.clone();
@@ -61,7 +78,14 @@ impl State {
     fn history_message(&self) -> String {
         let h = lock(&self.history);
         let older = |d: &VecDeque<f64>| d.iter().take(d.len().saturating_sub(1)).copied().collect::<Vec<_>>();
-        json!({ "history": { "cpu": older(&h.cpu), "down": older(&h.down), "up": older(&h.up) } }).to_string()
+        let map = |m: &BTreeMap<String, VecDeque<f64>>| -> serde_json::Map<String, Value> {
+            m.iter().map(|(key, d)| (key.clone(), json!(older(d)))).collect()
+        };
+        json!({ "history": {
+            "cpu": older(&h.cpu), "down": older(&h.down), "up": older(&h.up),
+            "disks": map(&h.disks), "temps": map(&h.temps),
+        } })
+        .to_string()
     }
 }
 
@@ -99,6 +123,7 @@ const ASSETS: &[Asset] = &[
     asset!("/app.js", "text/javascript; charset=utf-8", "app.js"),
     asset!("/fonts/JetBrainsMono.woff2", "font/woff2", "fonts/JetBrainsMono.woff2"),
     asset!("/fonts/OFL.txt", "text/plain; charset=utf-8", "fonts/OFL.txt"),
+    asset!("/favicon.svg", "image/svg+xml", "favicon.svg"),
 ];
 
 fn handle(mut stream: TcpStream, state: &State) -> io::Result<()> {
@@ -286,11 +311,14 @@ mod tests {
     #[test]
     fn websocket_sends_history_then_updates() {
         let state = Arc::new(State::default());
-        state.publish(&json!({"cpu": {"percent": 10.0}, "network": {"down": 1.0, "up": 2.0}}));
-        state.publish(&json!({"cpu": {"percent": 20.0}, "network": {"down": 1.0, "up": 2.0}}));
+        let disks = |busy: f64| json!({"items": [{"name": "sda", "busy": busy}]});
+        state.publish(&json!({"cpu": {"percent": 10.0}, "network": {"down": 1.0, "up": 2.0}, "disks": disks(30.0), "temps": {"cpu": 50.0}}));
+        state.publish(&json!({"cpu": {"percent": 20.0}, "network": {"down": 1.0, "up": 2.0}, "disks": disks(40.0), "temps": {"cpu": 55.0}}));
         let reply = request(state, "GET /ws HTTP/1.1\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n");
         assert!(reply.starts_with("HTTP/1.1 101"));
         assert!(reply.contains(r#"{"history":{"cpu":[10.0]"#));
+        assert!(reply.contains(r#""disks":{"sda":[30.0]}"#));
+        assert!(reply.contains(r#""temps":{"cpu":[50.0]}"#));
         assert!(reply.contains(r#""percent":20.0"#));
     }
 }

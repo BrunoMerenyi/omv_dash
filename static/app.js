@@ -33,7 +33,7 @@ const fmt = {
 
 // ---------- Small HTML builders ----------
 
-const LEVEL_TEXT = { ok: "OK", warn: "Warning", crit: "Critical" };
+const LEVEL_TEXT = { ok: "healthy", warn: "warning", crit: "critical" };
 
 const NA = (reason) => `<span class="na">Not available${reason ? `<small>${esc(reason)}</small>` : ""}</span>`;
 const loading = '<span class="na">Loading …</span>';
@@ -113,6 +113,7 @@ function push(list, value) {
   if (list.length > HISTORY + 1) list.shift(); // one extra point, hidden left of the edge
 }
 
+/** Draw a scrolling history graph. Each series: { values, cls, area }. */
 function graph(svg, series, max) {
   const W = 300, H = 60, step = W / (HISTORY - 1);
   const x = (i, n) => W - (n - 1 - i) * step;    // newest point at the right edge
@@ -128,11 +129,12 @@ function graph(svg, series, max) {
     const n = values.length;
     if (n < 2) continue;
     const pts = values.map((v, i) => `${x(i, n).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
-    if (area) plot += `<polygon class="area ${cls}" points="${x(0, n).toFixed(1)},${H} ${pts} ${W},${H}"/>`;
+    if (area) plot += `<polygon class="area ${cls}" mask="url(#fade)" points="${x(0, n).toFixed(1)},${H} ${pts} ${W},${H}"/>`;
     plot += `<polyline class="line ${cls}" points="${pts}"/>`;
   }
   svg.innerHTML = `${grid}<g>${plot}</g>`;
-  svg.graphData = { series, max };
+  // Where each series sits (0–100 % from the top) – used by the hover tooltip.
+  svg.graphData = { series, top: series.map(() => (v) => (y(v) / H) * 100) };
   if (svg.refreshTip) svg.refreshTip();
   // Start one step to the right and glide left over the next second, so the
   // graph scrolls continuously instead of jumping once per update.
@@ -144,19 +146,80 @@ function graph(svg, series, max) {
   }
 }
 
-// ---------- Per-disk IO graphs (btop's IO%) ----------
+// ---------- Small history graphs (disk IO, temperatures, fans) ----------
 
-const IO_POINTS = 60, IO_W = 60, IO_H = 20;
-const diskHistory = {}; // disk name -> recent busy % values
+const SPARK_W = 60, SPARK_H = 20;  // viewBox units; the graph is stretched to its box
+const diskHistory = {};            // disk name -> recent busy %
+const tempHistory = {};            // "cpu", "board", "disk", "fan:<label>" -> recent values
 
-function ioGraph(values = []) {
-  const last = values.slice(-(IO_POINTS + 1));
-  if (last.length < 2) return `<svg class="spark" viewBox="0 0 ${IO_W} ${IO_H}" preserveAspectRatio="none"><g></g></svg>`;
-  const x = (i) => IO_W - (last.length - 1 - i) * (IO_W / (IO_POINTS - 1));
-  const y = (v) => IO_H - Math.min(100, v) / 100 * (IO_H - 2) - 1;
+/**
+ * A small history graph. lo/hi: value range, points: seconds shown.
+ * tip: { src: "disk:<name>" | "temp:<key>", label, unit } for the hover tooltip.
+ */
+function spark(values = [], lo = 0, hi = 100, points = 60, cls = "", tip = null) {
+  const step = SPARK_W / (points - 1);
+  const data = tip ? ` data-src="${esc(tip.src)}" data-label="${esc(tip.label)}" data-unit="${tip.unit}" data-points="${points}"` : "";
+  const open = `<svg class="spark ${cls}" viewBox="0 0 ${SPARK_W} ${SPARK_H}" preserveAspectRatio="none" data-step="${step}"${data} aria-hidden="true">`;
+  const last = values.slice(-(points + 1));
+  if (last.length < 2) return `${open}<g></g></svg>`;
+  const x = (i) => SPARK_W - (last.length - 1 - i) * step;
+  const y = (v) => SPARK_H - Math.min(1, Math.max(0, (v - lo) / (hi - lo))) * (SPARK_H - 2) - 1;
   const pts = last.map((v, i) => `${x(i).toFixed(2)},${y(v).toFixed(2)}`).join(" ");
-  return `<svg class="spark" viewBox="0 0 ${IO_W} ${IO_H}" preserveAspectRatio="none" aria-hidden="true"><g>
-    <polygon class="area" points="${x(0).toFixed(2)},${IO_H} ${pts} ${IO_W},${IO_H}"/><polyline class="line" points="${pts}"/></g></svg>`;
+  return `${open}<g><polygon class="area" mask="url(#fade)" points="${x(0).toFixed(2)},${SPARK_H} ${pts} ${SPARK_W},${SPARK_H}"/>` +
+    `<polyline class="line" points="${pts}"/></g></svg>`;
+}
+
+/** Let every small graph inside `root` glide one step left, like the big graphs. */
+function slideSparks(root) {
+  if (reduceMotion) return;
+  for (const svg of root.querySelectorAll(".spark")) {
+    svg.firstElementChild.animate(
+      [{ transform: `translateX(${svg.dataset.step}px)` }, { transform: "translateX(0)" }],
+      { duration: 1000, easing: "linear" },
+    );
+  }
+}
+
+// ---------- Tooltips for the small graphs (same look as the big ones) ----------
+
+const sparkTip = { svg: null, x: 0 };
+
+function setupSparkTips() {
+  document.body.insertAdjacentHTML("beforeend", '<div class="ftip" hidden></div><div class="fline" hidden></div>');
+  const move = (event) => {
+    sparkTip.svg = event.target.closest ? event.target.closest(".spark[data-src]") : null;
+    sparkTip.x = event.clientX;
+    showSparkTip();
+  };
+  document.addEventListener("pointermove", move);
+  document.addEventListener("pointerdown", move); // phones: tap / drag
+  window.addEventListener("scroll", () => { sparkTip.svg = null; showSparkTip(); }, { passive: true });
+}
+
+/** Show (or refresh, after each update) the tooltip for the hovered small graph. */
+function showSparkTip() {
+  const tip = document.querySelector(".ftip"), line = document.querySelector(".fline");
+  const svg = sparkTip.svg;
+  const hide = () => { tip.hidden = line.hidden = true; };
+  if (!svg || !svg.isConnected) return hide();
+  const r = svg.getBoundingClientRect();
+  const points = Number(svg.dataset.points);
+  const ago = Math.round((1 - Math.min(1, Math.max(0, (sparkTip.x - r.left) / r.width))) * (points - 1));
+  const [kind, ...rest] = svg.dataset.src.split(":");
+  const values = (kind === "disk" ? diskHistory : tempHistory)[rest.join(":")] || [];
+  const v = values[values.length - 1 - ago];
+  if (v === undefined) return hide();
+
+  const x = r.left + (1 - ago / (points - 1)) * r.width; // snap to that second
+  const unit = svg.dataset.unit;
+  const value = unit === "rpm" ? `${fmt.num(Math.round(v))} rpm` : unit === "°C" ? fmt.temp(v) : `${Math.round(v)} %`;
+  tip.innerHTML = `<div class="muted">${ago ? `${ago} s ago` : "now"}</div>${esc(svg.dataset.label)} · ${value}`;
+  tip.hidden = line.hidden = false;
+  Object.assign(line.style, { left: `${x}px`, top: `${r.top}px`, height: `${r.height}px` });
+  Object.assign(tip.style, {
+    left: `${x}px`, top: `${r.top}px`,
+    transform: x > innerWidth - 240 ? "translate(calc(-100% - 10px), -100%)" : "translate(10px, -100%)",
+  });
 }
 
 // ---------- Graph tooltips ----------
@@ -189,7 +252,7 @@ function setupTooltip(svg, format) {
     tip.classList.toggle("flip", x > 60);                    // keep the box inside the card
     tip.innerHTML = `<div class="muted">${ago ? `${ago} s ago` : "now"}</div>${format(values)}`;
     dots.innerHTML = data.series.map((s, i) => {
-      const top = (1 - Math.min(1, values[i] / data.max)) * 100;
+      const top = data.top[i](values[i]);
       return `<i style="left:${x}%;top:${top}%;background:${seriesColor(s.cls, values[i])}"></i>`;
     }).join("");
   };
@@ -202,6 +265,7 @@ function setupTooltip(svg, format) {
   svg.addEventListener("pointerleave", () => { fraction = null; hide(); });
 }
 
+setupSparkTips();
 setupTooltip($("cpu-graph"), ([total]) => `Total ${hot(total, fmt.pct(total))}`);
 setupTooltip($("net-graph"), ([down, up]) =>
   `<div style="color:var(--net-down)">↓ ${fmt.rate(down)}</div><div style="color:var(--net-up)">↑ ${fmt.rate(up)}</div>`);
@@ -218,6 +282,7 @@ function renderHeader(s) {
   const { level: lvl, reasons } = s.status;
   const el = $("status");
   el.className = `status lvl-${lvl}`;
+  el.title = reasons.join(", ");
   patch(el, `<span>${LEVEL_TEXT[lvl]}</span>` +
     (reasons.length ? `<span class="reasons">· ${reasons.map(esc).join(", ")}</span>` : ""));
 }
@@ -281,19 +346,35 @@ function renderCpu(cpu, temps, limits) {
 }
 
 function renderTemps(t, limits) {
+  const fanKey = (f) => `fan:${f.label}`;
+  if (t.ok) {
+    for (const [key, value] of [["cpu", t.cpu], ["board", t.board], ["disk", t.disk && t.disk.temp]]) {
+      if (value != null) push(tempHistory[key] ||= [], value);
+    }
+    for (const f of t.fans || []) push(tempHistory[fanKey(f)] ||= [], f.rpm);
+  }
   card("temps", t, () => {
-    const temp = (v, lim) => (v == null ? NA() : `${hot(tempHeat(v, lim), fmt.temp(v))}${flag(level(v, lim))}`);
-    const fans = (t.fans || []).length
-      ? t.fans.map((f) => row(esc(f.label), `${fmt.num(f.rpm)} RPM`)).join("")
-      : row("Fans", NA());
-    return `<div class="rows">
-      ${row("CPU", temp(t.cpu, limits.cpu_temp))}
-      ${row("Mainboard", temp(t.board, limits.cpu_temp))}
-      ${row(t.disk ? `Hottest disk · ${esc(t.disk.name)}` : "Hottest disk", t.disk ? temp(t.disk.temp, limits.disk_temp) : NA())}
+    const tempRow = (key, label, value, [, crit]) => `<div class="trow">
+        <span class="k">${label}</span>${spark(tempHistory[key], 25, crit, 120, "", { src: `temp:${key}`, label, unit: "°C" })}
+        <span class="v">${value == null ? NA() : `${hot(tempHeat(value, [0, crit]), fmt.temp(value))}${flag(level(value, key === "disk" ? limits.disk_temp : limits.cpu_temp))}`}</span>
+      </div>`;
+    const fanRow = (f) => {
+      const hist = tempHistory[fanKey(f)] || [];
+      // Fans: scale to their own recent range so changes are visible (0 rpm would make a solid block).
+      return `<div class="trow">
+        <span class="k">${esc(f.label)}</span>${spark(hist, Math.min(f.rpm, ...hist) * 0.9, Math.max(f.rpm, ...hist) * 1.1, 120, "fan", { src: `temp:${fanKey(f)}`, label: f.label, unit: "rpm" })}
+        <span class="v">${fmt.num(f.rpm)} <small class="unit">rpm</small></span>
+      </div>`;
+    };
+    return `<div class="trows">
+      ${tempRow("cpu", "cpu", t.cpu, limits.cpu_temp)}
+      ${tempRow("board", "mainboard", t.board, limits.cpu_temp)}
+      ${tempRow("disk", t.disk ? `disk · ${esc(t.disk.name)}` : "hottest disk", t.disk && t.disk.temp, limits.disk_temp)}
       <div class="sep"></div>
-      ${fans}
+      ${(t.fans || []).length ? t.fans.map(fanRow).join("") : `<div class="trow"><span class="k">fans</span><span></span><span class="v">${NA()}</span></div>`}
     </div>`;
   });
+  slideSparks($("temps"));
 }
 
 function renderMemory(m, limits) {
@@ -320,17 +401,18 @@ function renderMemory(m, limits) {
 
 let netMax = 0; // smoothed top of the network graph
 
+// Let the top of a graph glide to a new scale instead of jumping.
+const glide = (current, target) => (current ? current + (target - current) * (target > current ? 0.5 : 0.15) : target);
+
 function renderNetwork(n) {
   push(history.down, n.ok ? n.down : 0);
   push(history.up, n.ok ? n.up : 0);
-  const target = Math.max(1e6, ...history.down, ...history.up) * 1.1;
-  netMax = netMax ? netMax + (target - netMax) * (target > netMax ? 0.5 : 0.15) : target;
-  const max = netMax;
+  netMax = glide(netMax, Math.max(1e6, ...history.down, ...history.up) * 1.1);
   graph($("net-graph"), [
     { values: history.down, cls: "line-down", area: true },
-    { values: history.up, cls: "line-up" },
-  ], max);
-  $("net-scale").textContent = fmt.rate(max);
+    { values: history.up, cls: "line-up", area: true },
+  ], netMax);
+  $("net-scale").textContent = fmt.rate(netMax);
   $("net-iface").textContent = n.iface || "";
 
   card("network", n, () => `<div class="stats">
@@ -374,9 +456,9 @@ function renderStorage(pool, disks, limits) {
     if (!disks.items.length) return '<span class="muted">No disks found</span>';
     return `<div class="disk-list">${disks.items.map((d) => {
       const tl = d.temp != null ? level(d.temp, limits.disk_temp) : "ok";
-      const smart = d.smart === false ? `<span class="pill lvl-crit">FAILED</span>`
-        : d.smart === true && d.bad > 0 ? `<span class="pill lvl-warn" title="${esc(d.bad_detail)}">${fmt.num(d.bad)} BAD</span>`
-        : d.smart === true ? `<span class="pill lvl-ok">SMART OK</span>` : `<span class="muted">no SMART</span>`;
+      const smart = d.smart === false ? '<span class="state lvl-crit">SMART failed</span>'
+        : d.smart === true && d.bad > 0 ? `<span class="state lvl-warn" title="${esc(d.bad_detail)}">${fmt.num(d.bad)} bad sectors</span>`
+        : d.smart === true ? '<span class="state lvl-ok">SMART OK</span>' : '<span class="muted">no SMART</span>';
       const mounted = d.used != null;
       const free = mounted ? d.total - d.used : 0;
       return `<div class="disk">
@@ -389,9 +471,8 @@ function renderStorage(pool, disks, limits) {
             ${smart}
           </span>
         </div>
-        <div class="meter" title="IO: how busy the disk is (100 % = it can't do more), last 60 s.
-Read ${fmt.rate(d.read || 0)} · Write ${fmt.rate(d.write || 0)}">
-          <span class="k">IO</span>${ioGraph(diskHistory[d.name])}
+        <div class="meter io">
+          <span class="k" title="How busy the disk is (100 % = it can't do more), last 60 s. Read ${fmt.rate(d.read || 0)} · Write ${fmt.rate(d.write || 0)}">IO</span>${spark(diskHistory[d.name], 0, 100, 60, "", { src: `disk:${d.name}`, label: `${d.name} busy`, unit: "%" })}
           <span class="pct">${d.busy != null ? hot(d.busy, `${Math.round(d.busy)} %`) : "–"}</span><span class="v"></span>
         </div>
         <div class="meter two">
@@ -402,12 +483,7 @@ Read ${fmt.rate(d.read || 0)} · Write ${fmt.rate(d.write || 0)}">
       </div>`;
     }).join("")}</div>`;
   });
-  // Scroll the IO graphs smoothly, like the big graphs.
-  if (!reduceMotion) {
-    for (const g of document.querySelectorAll("#disks .spark g")) {
-      g.animate([{ transform: `translateX(${IO_W / (IO_POINTS - 1)}px)` }, { transform: "translateX(0)" }], { duration: 1000, easing: "linear" });
-    }
-  }
+  slideSparks($("disks"));
 }
 
 function renderProcesses(p) {
@@ -425,8 +501,8 @@ function renderJellyfin(j) {
     if (!j.streams.length) return '<span class="muted">No active streams</span>';
     return `<div class="streams">${j.streams.map((s) => {
       const transcode = s.method === "Transcode";
-      const method = transcode ? `<span class="pill accent">Transcode</span>`
-        : `<span class="pill">${s.method === "DirectStream" ? "Direct Stream" : "Direct Play"}</span>`;
+      const method = transcode ? '<span class="method transcode">transcode</span>'
+        : `<span class="method">${s.method === "DirectStream" ? "direct stream" : "direct play"}</span>`;
       return `<div class="stream">
         <div class="title">${s.paused ? "❚❚ " : ""}${esc(s.title)}</div>
         <div class="info"><span>${esc(s.user)} · ${esc(s.device)}</span>
@@ -443,9 +519,9 @@ function renderMinecraft(m) {
   card("minecraft", m, () => {
     const lvl = m.online ? "ok" : "crit";
     return `<div class="mc">
-      <span class="pill lvl-${lvl}">${m.online ? "Online" : "Offline"}</span>
+      <span class="state lvl-${lvl}">${m.online ? "online" : "offline"}</span>
       ${m.online ? `<span class="big">${m.players}<small class="muted"> / ${m.max}</small></span><span class="muted">players</span>` : ""}
-    </div>${m.online && m.names && m.names.length ? `<div class="names">${m.names.map((n) => `<span class="pill">${esc(n)}</span>`).join("")}</div>` : ""}
+    </div>${m.online && m.names && m.names.length ? `<div class="names">${m.names.map((n) => `<span>${esc(n)}</span>`).join("")}</div>` : ""}
     ${m.online && m.version ? `<div class="muted" style="margin-top:10px">Version ${esc(m.version)}</div>` : ""}`;
   });
 }
@@ -461,6 +537,7 @@ function render(s) {
   renderProcesses(s.processes);
   renderJellyfin(s.jellyfin);
   renderMinecraft(s.minecraft);
+  showSparkTip(); // keep an open tooltip up to date
 }
 
 // ---------- WebSocket with automatic reconnect ----------
@@ -471,7 +548,8 @@ function connect() {
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.onopen = () => {
     retryDelay = 1000;
-    $("conn").textContent = "● Live";
+    $("conn").textContent = "live";
+    $("conn").className = "conn";
     $("grid").classList.remove("stale");
   };
   ws.onmessage = (event) => {
@@ -480,6 +558,8 @@ function connect() {
       if (data.history) {
         // First message: the last 2 minutes, kept by the server, so graphs start full.
         for (const key of ["cpu", "down", "up"]) history[key] = data.history[key].slice(-(HISTORY + 1));
+        for (const [name, values] of Object.entries(data.history.disks || {})) diskHistory[name] = values.slice(-(HISTORY + 1));
+        for (const [key, values] of Object.entries(data.history.temps || {})) tempHistory[key] = values.slice(-(HISTORY + 1));
         netMax = 0;
         return;
       }
@@ -487,7 +567,8 @@ function connect() {
     } catch (err) { console.error(err); }
   };
   ws.onclose = () => {
-    $("conn").textContent = "○ Disconnected – reconnecting …";
+    $("conn").textContent = "reconnecting …";
+    $("conn").className = "conn lvl-warn";
     $("grid").classList.add("stale");
     setTimeout(connect, retryDelay);
     retryDelay = Math.min(retryDelay * 2, 10000);

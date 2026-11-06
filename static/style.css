@@ -5,32 +5,36 @@
   font-display: swap;
 }
 
+/* ============================================================
+   Design tokens
+   Pure black like btop. Panels are drawn by thin frames with the
+   title sitting on the frame. No accent colour: each panel has its
+   own title colour, data uses meaningful colours (heat scale etc.).
+   ============================================================ */
 :root {
-  /* Pure black, btop-style: boxes are drawn by their borders. */
-  --bg: #000000;
-  --card: #000000;
-  --border: #262a30;
-  --track: #1a1d22;
-  --text: #E8EAED;
-  --muted: #A4ABB6;
-  --ok: #86EFAC;
-  --warn: #FCD34D;
-  --crit: #FCA5A5;
+  --bg: #000;
+  --line: #24272d;       /* panel frames */
+  --line-soft: #14161a;  /* row separators */
+  --track: #1a1d22;      /* empty part of bars */
+  --text: #e6e8eb;
+  --muted: #8f96a1;      /* labels */
+  --faint: #5c626c;      /* units, captions, hints */
+  --ok: #86efac;
+  --warn: #fcd34d;
+  --crit: #fca5a5;
 
   /* Heat scale (same stops as heat() in app.js): idle -> busy */
   --heat: linear-gradient(90deg, hsl(130 70% 65%), hsl(65 70% 65%) 50%, hsl(0 70% 65%));
 
-  /* Data colours */
-  --mem-cache: #60A5FA;
-  --mem-free: #4ADE80;
-  --net-down: #A78BFA;
-  --net-up: #F472B6;
-  --radius: 12px;
-  --gap: 16px;
+  --mem-cache: #60a5fa;
+  --net-down: #a78bfa;
+  --net-up: #f472b6;
+
+  --graph-fill: .45;     /* fill under graph lines: strength at the top, fades to 0 */
+  --radius: 10px;
 }
 
 * { box-sizing: border-box; }
-
 html, body { margin: 0; }
 
 body {
@@ -38,73 +42,78 @@ body {
   color: var(--text);
   font: 400 13px/1.5 "JetBrains Mono", ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
-  padding: 20px;
+  -webkit-font-smoothing: antialiased;
+  padding: 18px 20px 28px;
   max-width: 1600px;
   margin: 0 auto;
 }
 
 h1, h2 { margin: 0; font-weight: 600; }
-
-/* ---------- Header ---------- */
-
-.topbar {
-  display: flex; align-items: center; flex-wrap: wrap;
-  gap: 12px 32px; margin-bottom: var(--gap);
-  padding: 14px 20px;
-  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-}
-.brand { display: flex; align-items: center; gap: 10px; }
-.brand h1 { font-size: 20px; letter-spacing: .08em; color: var(--text); }
-.tag {
-  font-size: 11px; padding: 1px 7px; border: 1px solid var(--border);
-  border-radius: 6px; color: var(--muted);
-}
-.meta { display: flex; gap: 28px; margin: 0; }
-.meta div { display: flex; gap: 8px; align-items: baseline; }
-.meta dt { color: var(--muted); }
-.meta dd { margin: 0; }
-.status-wrap { margin-left: auto; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-.conn { color: var(--muted); font-size: 12px; }
-
-.status {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 4px 12px; border-radius: 999px; border: 1px solid currentColor;
-  font-weight: 600;
-}
-.status .reasons { font-weight: 400; color: var(--text); }
+.muted { color: var(--muted); }
 .lvl-ok { color: var(--ok); }
 .lvl-warn { color: var(--warn); }
 .lvl-crit { color: var(--crit); }
 
-/* ---------- Grid & cards ---------- */
+/* Labels are quiet: lowercase, small, muted. Data is what stands out. */
+.stat .label, th, .meter .k, .row .k, .core-name, .meta dt,
+.graph-caption, .legend { text-transform: lowercase; }
 
-.grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: var(--gap); }
-.grid.stale { opacity: .55; }
+/* ---------- Header: one slim line, no box ---------- */
+
+.topbar {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 28px;
+  padding: 0 4px 14px; margin-bottom: 26px;
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.brand h1 { font-size: 18px; letter-spacing: -.01em; }
+.tag { font-size: 11px; color: var(--warn); }
+.meta { display: flex; gap: 24px; margin: 0; }
+.meta div { display: flex; gap: 8px; align-items: baseline; }
+.meta dt { color: var(--faint); }
+.meta dd { margin: 0; min-width: 13ch; }
+/* The status always stays on one line: long reason lists end in "…" (full list on hover). */
+.status-wrap { margin-left: auto; flex: 1; min-width: 0; display: flex; align-items: baseline; justify-content: flex-end; gap: 20px; }
+.status { display: inline-flex; align-items: baseline; gap: 8px; font-weight: 600; min-width: 0; white-space: nowrap; }
+.status::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor;
+  align-self: center;
+}
+.status .reasons { font-weight: 400; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.conn { color: var(--faint); font-size: 12px; }
+.conn.lvl-warn { color: var(--warn); }
+
+/* ---------- Panels: btop-style frame with the title on the border ---------- */
+
+.grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 26px 16px; }
+.grid.stale { opacity: .5; }
 
 .card {
-  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 16px 18px; min-width: 0;
+  position: relative; min-width: 0;
   display: flex; flex-direction: column;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 22px 18px 16px;
 }
 .card > header {
+  position: absolute; top: 0; left: 12px; right: 12px; transform: translateY(-50%);
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  margin-bottom: 14px;
+  line-height: 1;
 }
-.card h2 {
-  display: flex; align-items: center; gap: 10px;
-  font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+.card > header > * { background: var(--bg); padding: 0 6px; }
+.card h2 { font-size: 13px; color: var(--c, var(--text)); text-transform: lowercase; }
+.card > header .aside {
+  min-width: 0; color: var(--faint); font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.card h2 { color: var(--c, var(--text)); }
-.c-cpu { --c: #86EFAC; }
-.c-temps { --c: #FCA5A5; }
-.c-mem { --c: #FCD34D; }
-.c-net { --c: #C4B5FD; }
-.c-docker { --c: #7DD3FC; }
-.c-storage { --c: #FDBA74; }
-.c-proc { --c: #F9A8D4; }
-.c-jf { --c: #D8B4FE; }
-.c-mc { --c: #6EE7B7; }
-.aside { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c-cpu { --c: #86efac; }
+.c-temps { --c: #fca5a5; }
+.c-mem { --c: #fcd34d; }
+.c-net { --c: #c4b5fd; }
+.c-docker { --c: #7dd3fc; }
+.c-storage { --c: #fdba74; }
+.c-proc { --c: #f9a8d4; }
+.c-jf { --c: #d8b4fe; }
+.c-mc { --c: #6ee7b7; }
 
 .span-cpu { grid-column: span 5; }
 .span-temps { grid-column: span 3; }
@@ -121,24 +130,28 @@ h1, h2 { margin: 0; font-weight: 600; }
 }
 
 @media (max-width: 719px) {
-  body { padding: 12px; }
-  .grid { gap: 12px; }
+  body { padding: 14px 12px 24px; }
+  .grid { gap: 24px 12px; }
   .grid > * { grid-column: 1 / -1 !important; }
-  .topbar { padding: 12px 16px; gap: 8px 20px; }
-  .status-wrap { margin-left: 0; width: 100%; }
+  .card { padding: 20px 14px 14px; }
+  .topbar { gap: 4px 20px; }
+  .status-wrap { margin-left: 0; flex: none; width: 100%; justify-content: space-between; }
 }
 
 /* ---------- Common bits ---------- */
 
-.muted { color: var(--muted); }
-.na { color: var(--muted); font-style: italic; }
-.na small { display: block; font-style: normal; font-size: 11px; opacity: .8; }
+.na { color: var(--faint); font-style: italic; }
+.na small { display: block; font-style: normal; font-size: 11px; }
+.flag { font-size: 11px; font-weight: 600; margin-left: 6px; }
 
-.stats { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 28px; margin-bottom: 14px; }
-/* Plain values get the gauge's height so their text lines up with the gauge numbers. */
-.stats:has(.gauge) .stat:not(.gauge-stat) .value { line-height: 64px; }
-.stat .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-.stat .value { font-size: 24px; font-weight: 600; line-height: 1.2; }
+.stats { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 28px; margin-bottom: 18px; }
+.stats:has(.gauge) .stat:not(.gauge-stat) .value { line-height: 64px; } /* line up with gauge numbers */
+.stat .label { color: var(--muted); font-size: 11px; }
+.stat .value { font-size: 24px; font-weight: 600; line-height: 1.2; letter-spacing: -.01em; }
+.stat .value small { font-size: 12px; color: var(--faint); font-weight: 400; margin-left: 3px; letter-spacing: 0; }
+.stat .value.down { color: var(--net-down); }
+.stat .value.up { color: var(--net-up); }
+
 /* Dome gauges (CPU usage and temperature) */
 .gauge-stat { display: flex; flex-direction: column; align-items: center; }
 .gauge { position: relative; width: 76px; height: 64px; }
@@ -151,54 +164,58 @@ h1, h2 { margin: 0; font-weight: 600; }
   align-items: center; justify-content: center; line-height: 1;
 }
 .gauge-text span { font-size: 20px; font-weight: 600; }
-.gauge-text small { font-size: 10px; color: var(--muted); margin-top: 3px; }
-@media (prefers-reduced-motion: reduce) { .gauge-fill { transition: none; } }
-
-.stat .value small { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 2px; }
-.stat .value.down { color: var(--net-down); }
-.stat .value.up { color: var(--net-up); }
+.gauge-text small { font-size: 10px; color: var(--faint); margin-top: 3px; }
 
 .bar { height: 6px; background: var(--track); border-radius: 3px; overflow: hidden; display: flex; }
 .bar > span { display: block; height: 100%; transition: width .8s ease-out, background-color .8s; }
 .bar.heat { background: var(--heat); justify-content: flex-end; }
 .bar.heat > .rest { background: var(--track); }
 .bar > span.cache { background: var(--mem-cache); opacity: .75; }
-.dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 8px; vertical-align: 0; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 8px; }
 
 .rows { display: grid; gap: 10px; }
 .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .row .k { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row .v { white-space: nowrap; }
-.sep { border-top: 1px solid var(--border); margin: 4px 0; }
+.sep { border-top: 1px solid var(--line-soft); margin: 4px 0; }
 
-.flag { font-size: 11px; font-weight: 600; margin-left: 6px; }
+/* Status with a dot: filled = good, hollow = needs attention. Colour + text, never colour alone. */
+.state { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; font-size: 12px; }
+.state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid currentColor; }
+.state.lvl-ok::before { background: currentColor; }
 
-.pill {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 11px; padding: 0 8px; border-radius: 999px;
-  border: 1px solid var(--border); color: var(--muted); white-space: nowrap;
-}
-.pill.lvl-ok, .pill.lvl-warn, .pill.lvl-crit { border-color: currentColor; }
-.pill.accent { color: var(--c); border-color: currentColor; }
+/* ---------- Temperatures: one 2-minute graph per sensor, rows share the panel height ---------- */
+
+#temps { flex: 1; display: flex; flex-direction: column; }
+.trows { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.trow { flex: 1; min-height: 34px; display: grid; grid-template-columns: 13ch minmax(0, 1fr) 13ch; gap: 12px; align-items: center; }
+.trow .k { color: var(--muted); text-transform: lowercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trow .v { text-align: right; white-space: nowrap; }
+.trow .spark { height: 100%; max-height: 52px; min-height: 26px; }
+.trows .sep { flex: none; margin: 4px 0; }
+.unit { color: var(--faint); font-size: 11px; }
+.spark.fan .line { stroke: var(--c); }
+.spark.fan .area { fill: var(--c); }
 
 /* ---------- Graphs ---------- */
 
-.graph { position: relative; height: 64px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+.graph { position: relative; height: 64px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
 .graph.grow { flex: 1; min-height: 64px; height: auto; }
-.graph svg { width: 100%; height: 100%; display: block; overflow: hidden; }
-.graph .grid-line { stroke: var(--border); stroke-dasharray: 2 4; vector-effect: non-scaling-stroke; }
+.graph svg { width: 100%; height: 100%; display: block; overflow: hidden; cursor: crosshair; touch-action: pan-y; }
+.graph .grid-line { stroke: var(--line-soft); stroke-dasharray: 2 4; vector-effect: non-scaling-stroke; }
 .graph .line { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .graph .line.heat { stroke: url(#heat-grad); }
-.graph .area.heat { fill: url(#heat-grad); opacity: .15; }
+.graph .area.heat { fill: url(#heat-grad); }
 .graph .line-down { stroke: var(--net-down); }
-.graph .area.line-down { fill: var(--net-down); opacity: .12; }
+.graph .area.line-down { fill: var(--net-down); }
 .graph .line-up { stroke: var(--net-up); stroke-dasharray: 4 3; }
+.graph .area.line-up { fill: var(--net-up); }
+.graph-label, .graph-caption { position: absolute; top: -2px; font-size: 10px; color: var(--faint); }
+.graph-label { right: 0; }
+.graph-caption { left: 0; }
+
 /* Hover tooltip */
-.graph svg { cursor: crosshair; touch-action: pan-y; }
-.graph .crosshair {
-  position: absolute; top: 0; bottom: 0; width: 1px; pointer-events: none;
-  background: var(--muted); opacity: .45;
-}
+.graph .crosshair { position: absolute; top: 0; bottom: 0; width: 1px; pointer-events: none; background: var(--muted); opacity: .4; }
 .graph .dots i {
   position: absolute; width: 8px; height: 8px; border-radius: 50%; pointer-events: none;
   transform: translate(-50%, -50%); border: 2px solid var(--bg);
@@ -206,33 +223,38 @@ h1, h2 { margin: 0; font-weight: 600; }
 .graph .tip {
   position: absolute; top: 6px; z-index: 2; pointer-events: none;
   transform: translateX(10px); white-space: nowrap;
-  background: #0c0e11; border: 1px solid var(--border); border-radius: 8px;
+  background: #0b0c0e; border: 1px solid var(--line); border-radius: 8px;
   padding: 6px 10px; font-size: 12px; line-height: 1.5;
 }
 .graph .tip.flip { transform: translateX(calc(-100% - 10px)); }
-.graph .tip .muted { font-size: 11px; }
-.graph-label, .graph-caption { position: absolute; top: -2px; font-size: 10px; color: var(--muted); }
-.graph-label { right: 0; }
-.graph-caption { left: 0; }
+.graph .tip .muted { font-size: 11px; color: var(--faint); }
 
-.legend { display: flex; gap: 20px; color: var(--muted); font-size: 11px; margin-top: -6px; }
+/* Same tooltip for the small graphs (fixed to the viewport, follows the pointer) */
+.spark[data-src] { cursor: crosshair; touch-action: pan-y; }
+.ftip {
+  position: fixed; z-index: 10; pointer-events: none; white-space: nowrap;
+  background: #0b0c0e; border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 10px; font-size: 12px; line-height: 1.5; margin-top: -6px;
+}
+.ftip .muted { font-size: 11px; color: var(--faint); }
+.fline { position: fixed; z-index: 9; width: 1px; pointer-events: none; background: var(--muted); opacity: .4; }
+
+.legend { display: flex; gap: 20px; color: var(--faint); font-size: 11px; margin-top: -8px; }
 .legend span { display: flex; align-items: center; gap: 6px; }
 .legend .line { display: inline-block; width: 18px; border-top: 2px solid var(--net-down); }
 .legend .line-up { border-top: 2px dashed var(--net-up); }
 
-/* ---------- CPU threads ---------- */
+/* ---------- CPU: one row per physical core ---------- */
 
-/* One row per physical core: name, a bar per thread, core average.
-   --per-core (threads per core) is set by app.js. */
-.threads { display: grid; gap: 7px; font-size: 12px; }
+.threads { display: grid; gap: 8px; font-size: 12px; }
 .core {
   display: grid; align-items: center; column-gap: 28px;
-  grid-template-columns: 52px 5ch repeat(var(--per-core, 2), minmax(0, 1fr));
+  grid-template-columns: 52px 5ch repeat(var(--per-core, 2), minmax(0, 1fr)); /* --per-core set by app.js */
 }
 .core-avg { margin-left: -16px; }
 .core-name { color: var(--muted); white-space: nowrap; }
 .thread { display: grid; grid-template-columns: 3ch minmax(0, 1fr) 5ch; align-items: center; gap: 10px; }
-.thread .tid { color: var(--muted); font-size: 11px; }
+.thread .tid { color: var(--faint); font-size: 11px; }
 .pct { text-align: right; white-space: nowrap; }
 @media (max-width: 479px) {
   .core { column-gap: 14px; grid-template-columns: 46px 5ch repeat(var(--per-core, 2), minmax(0, 1fr)); }
@@ -241,81 +263,79 @@ h1, h2 { margin: 0; font-weight: 600; }
   .thread .tid { display: none; }
 }
 
-/* ---------- Lists (docker, processes, jellyfin) ---------- */
+/* ---------- Tables (docker, processes) ---------- */
 
 table { width: 100%; border-collapse: collapse; }
-th {
-  text-align: left; font-weight: 400; color: var(--muted);
-  font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-  padding: 0 8px 8px 0; white-space: nowrap;
-}
-td { padding: 6px 8px 6px 0; border-top: 1px solid var(--border); vertical-align: middle; }
+th { text-align: left; font-weight: 400; color: var(--faint); font-size: 11px; padding: 0 8px 8px 0; white-space: nowrap; }
+td { padding: 7px 8px 7px 0; border-top: 1px solid var(--line-soft); vertical-align: middle; }
 th:last-child, td:last-child { padding-right: 0; }
 .num { text-align: right; white-space: nowrap; }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Fixed table layout: columns never resize when values change. Widths are in
-   px because header text is smaller than cell text (ch would differ). */
+/* Fixed layout: columns never resize when values change (px, because header
+   text is smaller than cell text). */
 table.fixed { table-layout: fixed; }
 table.fixed .name { max-width: none; width: auto; }
+.name { max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .w-status { width: 110px; }
 .w-cpu { width: 80px; }
 .w-mem { width: 88px; }
 .w-user { width: 92px; }
 .w-pct { width: 64px; }
-.name { max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.state { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12px; }
-.state::before {
-  content: ""; width: 7px; height: 7px; border-radius: 50%;
-  border: 1.5px solid currentColor;
-}
-.state.lvl-ok::before { background: currentColor; }
+/* ---------- Jellyfin ---------- */
 
-.streams { display: grid; gap: 12px; }
-.stream { display: grid; gap: 2px; padding-top: 10px; border-top: 1px solid var(--border); }
+.streams { display: grid; gap: 14px; }
+.stream { display: grid; gap: 3px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
 .stream:first-child { padding-top: 0; border-top: 0; }
 .stream .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.progress { height: 3px; background: var(--track); border-radius: 2px; overflow: hidden; margin-top: 6px; }
-.progress span { display: block; height: 100%; background: var(--c); transition: width .8s ease-out; }
-.reason { font-size: 11px; color: var(--muted); }
-.names { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .stream .info { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; }
 .stream .info > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stream .info > span:last-child { white-space: nowrap; }
-.bitrate { display: inline-block; min-width: 10ch; text-align: right; }
+.method { color: var(--faint); }
+.method.transcode { color: var(--c); }
+.bitrate { display: inline-block; min-width: 10ch; text-align: right; color: var(--text); }
+.progress { height: 3px; background: var(--track); border-radius: 2px; overflow: hidden; margin-top: 6px; }
+.progress span { display: block; height: 100%; background: var(--c); transition: width .8s ease-out; }
+.reason { font-size: 11px; color: var(--faint); }
 
-.mc { display: flex; align-items: center; gap: 16px; }
-.mc .big { font-size: 28px; font-weight: 600; }
+/* ---------- Minecraft ---------- */
+
+.mc { display: flex; align-items: baseline; gap: 14px; }
+.mc .big { font-size: 28px; font-weight: 600; letter-spacing: -.01em; }
+.mc .big small { font-size: 14px; color: var(--faint); font-weight: 400; }
+.names { margin-top: 10px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.names span:not(:last-child)::after { content: " · "; color: var(--faint); }
 
 /* ---------- Storage ---------- */
 
-.pool { display: grid; grid-template-columns: 200px 1fr 110px; gap: 6px 20px; align-items: center; margin-bottom: 18px; }
-.pool .value { font-size: 20px; font-weight: 600; }
-.pool .bar { height: 8px; }
+.pool { display: grid; grid-template-columns: 200px 1fr 110px; gap: 6px 20px; align-items: center; margin-bottom: 20px; }
+.pool .value { font-size: 22px; font-weight: 600; letter-spacing: -.01em; }
+.pool .bar { height: 8px; border-radius: 4px; }
 
-/* One block per disk, like btop's disk panel: name line, IO% history, Used, Free.
-   Every number has a fixed-width slot and every row a fixed height, so nothing
-   moves when values change. */
+/* One block per disk, like btop's disk panel. Every number has a fixed-width
+   slot and every row a fixed height, so nothing moves when values change. */
 .disk-list { display: grid; }
-.disk { display: grid; gap: 4px; padding: 12px 0; border-top: 1px solid var(--border); }
+.disk { display: grid; gap: 8px; padding: 14px 0; border-top: 1px solid var(--line-soft); }
 .disk:first-child { border-top: 0; padding-top: 0; }
 .disk:last-child { padding-bottom: 0; }
 
 .disk-head { display: flex; align-items: center; gap: 4px 12px; height: 24px; }
 .disk-name { font-weight: 600; white-space: nowrap; }
-.disk-head .model { flex: 1; min-width: 0; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.facts { display: grid; grid-template-columns: 12ch 11ch 10ch 13ch; column-gap: 12px; align-items: center; justify-items: end; white-space: nowrap; font-size: 12px; }
-.facts .muted { font-size: 11px; }
+.disk-head .model { flex: 1; min-width: 0; color: var(--faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.facts { display: grid; grid-template-columns: 12ch 11ch 10ch 16ch; column-gap: 12px; align-items: center; justify-items: end; white-space: nowrap; font-size: 12px; }
+.facts .muted { color: var(--faint); font-size: 11px; }
 
 .meter { display: grid; grid-template-columns: 5ch minmax(0, 1fr) 6ch 30ch; gap: 12px; align-items: center; height: 20px; font-size: 12px; white-space: nowrap; }
 .meter .k { color: var(--muted); }
 .meter .pct, .meter .v { text-align: right; }
 .meter .v { overflow: hidden; }
 .uf { display: inline-grid; grid-template-columns: 11ch 16ch; gap: 8px; text-align: right; }
-.spark { display: block; width: 100%; height: 20px; overflow: hidden; border-bottom: 1px dotted var(--border); }
+.uf .muted { color: var(--faint); }
+.meter.io { height: 36px; }
+.spark { display: block; width: 100%; height: 36px; overflow: hidden; border-bottom: 1px dotted var(--line); }
 .spark .line { fill: none; stroke: url(#io-heat); stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
-.spark .area { fill: url(#io-heat); opacity: .18; }
+.spark .area { fill: url(#io-heat); }
 
 @media (max-width: 719px) {
   .meter { grid-template-columns: 5ch minmax(0, 1fr) 6ch; gap: 8px; }
@@ -332,5 +352,5 @@ table.fixed .name { max-width: none; width: auto; }
 
 /* Respect "reduce motion": no sliding bars (graphs skip their animation in app.js). */
 @media (prefers-reduced-motion: reduce) {
-  .bar > span { transition: none; }
+  .bar > span, .gauge-fill, .progress span { transition: none; }
 }

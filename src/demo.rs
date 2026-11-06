@@ -2,7 +2,7 @@
 //! Mac. Every section has exactly the shape the real collectors produce.
 
 use serde_json::{json, Value};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const GB: f64 = 1e9;
 const TB: f64 = 1e12;
@@ -56,6 +56,7 @@ pub struct Demo {
     disk_read: Walk,
     players: Walk,
     watched: f64, // demo stream progress
+    started: Instant,
     load: [Walk; 3],
     containers: Vec<(&'static str, &'static str, &'static str, Option<Walk>, f64)>,
     processes: Vec<(u32, &'static str, &'static str, Walk, f64)>,
@@ -87,6 +88,7 @@ impl Default for Demo {
             disk_read: walk(2.4e6, 0.8e6, 6e6, 0.4e6),
             players: walk(3.0, 0.0, 8.0, 0.15),
             watched: 0.0,
+            started: Instant::now(),
             load: [walk(3.2, 1.5, 9.0, 0.25), walk(2.9, 1.8, 6.0, 0.08), walk(2.6, 2.0, 4.0, 0.03)],
             containers: vec![
                 ("jellyfin", "running", "Up 6 days", Some(walk(38.0, 12.0, 160.0, 15.0)), 1.42 * GIB),
@@ -113,12 +115,25 @@ impl Default for Demo {
     }
 }
 
+/// Blend from a normal value `a` towards the maxed-out value `b` (s = 0..1).
+fn mix(a: f64, b: f64, s: f64) -> f64 {
+    a + (b - a) * s
+}
+
 impl Demo {
+    /// A load spike once a minute (ramp up 4 s, hold 12 s, ramp down 4 s), so
+    /// the maxed-out look can be seen without being stuck in it.
+    fn stress(&self) -> f64 {
+        let t = self.started.elapsed().as_secs_f64() % 60.0;
+        if t < 38.0 { 0.0 } else if t < 42.0 { (t - 38.0) / 4.0 } else if t < 54.0 { 1.0 } else if t < 58.0 { (58.0 - t) / 4.0 } else { 0.0 }
+    }
+
     pub fn build(&mut self) -> Value {
+        let s = self.stress();
         let rng = &mut self.rng;
-        let threads: Vec<u32> = self.threads.iter_mut().map(|t| t.next(rng).round() as u32).collect();
-        let used = self.mem_used.next(rng);
-        let busy_read = self.disk_read.next(rng);
+        let threads: Vec<u32> = self.threads.iter_mut().map(|t| mix(t.next(rng), rng.range(88.0, 100.0), s).round() as u32).collect();
+        let used = mix(self.mem_used.next(rng), 29.6 * GIB, s);
+        let busy_read = mix(self.disk_read.next(rng), 180e6, s);
 
         let disks: Vec<Value> = DISKS
             .iter()
@@ -126,11 +141,12 @@ impl Demo {
                 let busy = name == "sdc"; // the disk Jellyfin is reading from
                 let idle_read = if rng.unit() < 0.25 { rng.range(5e4, 4e5) } else { 0.0 };
                 let write = if rng.unit() < 0.3 { rng.range(2e4, 9e5) } else { 0.0 };
-                let busy_pct = if busy { rng.range(18.0, 34.0) } else { (idle_read + write) / 2e5 };
+                let busy_pct = mix(if busy { rng.range(18.0, 34.0) } else { (idle_read + write) / 2e5 }, if busy { 100.0 } else { rng.range(55.0, 95.0) }, s);
+                let (idle_read, write) = (mix(idle_read, 60e6, s), mix(write, 35e6, s));
                 json!({
                     "name": name, "model": model, "size": size, "total": size, "used": used,
                     "percent": (used / size * 1000.0).round() / 10.0,
-                    "temp": temp + if busy { 2 } else { 0 } + (rng.unit() < 0.25) as i64,
+                    "temp": temp + if busy { 2 } else { 0 } + (rng.unit() < 0.25) as i64 + mix(0.0, if busy { 18.0 } else { 10.0 }, s).round() as i64,
                     "read": if name == "sdc" { busy_read } else { idle_read },
                     "write": write.round(),
                     "busy": (busy_pct * 10.0).round() / 10.0,
@@ -148,7 +164,7 @@ impl Demo {
                 let running = cpu.is_some();
                 json!({
                     "name": name, "state": state, "status": status,
-                    "cpu": cpu.as_mut().map(|w| (w.next(rng) * 10.0).round() / 10.0),
+                    "cpu": cpu.as_mut().map(|w| (w.next(rng) * (1.0 + 3.0 * s) * 10.0).round() / 10.0),
                     "mem": if running { Some(*mem as u64) } else { None },
                 })
             })
@@ -157,7 +173,7 @@ impl Demo {
             .processes
             .iter_mut()
             .map(|(pid, name, user, cpu, mem)| {
-                json!({ "pid": pid, "name": name, "user": user, "cpu": (cpu.next(rng) * 10.0).round() / 10.0, "mem": mem })
+                json!({ "pid": pid, "name": name, "user": user, "cpu": (cpu.next(rng) * (1.0 + 2.5 * s) * 10.0).round() / 10.0, "mem": mem })
             })
             .collect();
         processes.sort_by(|a, b| b["cpu"].as_f64().unwrap_or(0.0).total_cmp(&a["cpu"].as_f64().unwrap_or(0.0)));
@@ -172,27 +188,27 @@ impl Demo {
                 "ok": true,
                 "percent": (threads.iter().sum::<u32>() as f64 / threads.len() as f64 * 10.0).round() / 10.0,
                 "threads": threads,
-                "freq_mhz": rng.range(3400.0, 4550.0).round() as u64,
+                "freq_mhz": mix(rng.range(3400.0, 4550.0), 4650.0, s).round() as u64,
                 "model": "AMD Ryzen 7 5700G with Radeon Graphics",
                 "cores": 8,
-                "load": self.load.iter_mut().map(|w| (w.next(rng) * 100.0).round() / 100.0).collect::<Vec<_>>(),
+                "load": self.load.iter_mut().zip([15.6, 9.0, 5.0]).map(|(w, max)| (mix(w.next(rng), max, s) * 100.0).round() / 100.0).collect::<Vec<_>>(),
                 "core_threads": (0..8).map(|i| [i, i + 8]).collect::<Vec<_>>(),
             },
             "temps": {
                 "ok": true,
-                "cpu": (self.cpu_temp.next(rng) * 10.0).round() / 10.0,
-                "board": (self.board_temp.next(rng) * 10.0).round() / 10.0,
+                "cpu": (mix(self.cpu_temp.next(rng), 93.0, s) * 10.0).round() / 10.0,
+                "board": (mix(self.board_temp.next(rng), 49.0, s) * 10.0).round() / 10.0,
                 "fans": [
-                    { "label": "CPU fan", "rpm": self.fan_cpu.next(rng).round() },
-                    { "label": "Case", "rpm": self.fan_case.next(rng).round() },
+                    { "label": "CPU fan", "rpm": mix(self.fan_cpu.next(rng), 2100.0, s).round() },
+                    { "label": "Case", "rpm": mix(self.fan_case.next(rng), 1450.0, s).round() },
                 ],
             },
             "memory": {
-                "ok": true, "total": 32.0 * GIB, "used": used, "cached": 17.2 * GIB,
+                "ok": true, "total": 32.0 * GIB, "used": used, "cached": mix(17.2, 1.8, s) * GIB,
                 "percent": (used / (32.0 * GIB) * 1000.0).round() / 10.0,
-                "swap_total": 4.0 * GIB, "swap_used": 0.13 * GIB,
+                "swap_total": 4.0 * GIB, "swap_used": mix(0.13, 2.6, s) * GIB,
             },
-            "network": { "ok": true, "iface": "enp5s0", "up": self.net_up.next(rng), "down": self.net_down.next(rng) },
+            "network": { "ok": true, "iface": "enp5s0", "up": mix(self.net_up.next(rng), 38e6, s), "down": mix(self.net_down.next(rng), 117e6, s) },
             "pool": {
                 "ok": true, "path": "/srv/mergerfs/pool", "total": pool_total, "used": pool_used,
                 "free": pool_total - pool_used, "percent": (pool_used / pool_total * 1000.0).round() / 10.0,

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Three bars rising in the dashboard's heat colours, on black -->
+  <rect width="32" height="32" rx="7" fill="#000"/>
+  <rect x=".5" y=".5" width="31" height="31" rx="6.5" fill="none" stroke="#2a2e35"/>
+  <rect x="7" y="17" width="4.5" height="8" rx="1.2" fill="#86efac"/>
+  <rect x="13.75" y="12" width="4.5" height="13" rx="1.2" fill="#fcd34d"/>
+  <rect x="20.5" y="7" width="4.5" height="18" rx="1.2" fill="#fca5a5"/>
+</svg>
