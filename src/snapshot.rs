@@ -141,8 +141,11 @@ fn status(s: &Value, config: &Config) -> Value {
         check(disk["temp"].as_f64(), l.disk_temp, format!("{name} too hot"));
     }
     for disk in s["disks"]["items"].as_array().into_iter().flatten() {
+        let name = disk["name"].as_str().unwrap_or("?");
         if disk["smart"] == false {
-            reasons.push(("crit", format!("{} SMART failed", disk["name"].as_str().unwrap_or("?"))));
+            reasons.push(("crit", format!("{name} SMART failed")));
+        } else if disk["bad"].as_u64().unwrap_or(0) > 0 {
+            reasons.push(("warn", format!("{name} has bad sectors")));
         }
     }
     for c in s["docker"]["containers"].as_array().into_iter().flatten() {

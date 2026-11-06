@@ -17,10 +17,11 @@ function unit(value, base, units, digits = 1) {
   return `${value.toFixed(i === 0 ? 0 : digits)} ${units[i]}`;
 }
 const fmt = {
-  gib: (b) => unit(b, 1024, ["B", "KiB", "MiB", "GiB", "TiB"]),      // RAM
-  size: (b) => unit(b, 1000, ["B", "kB", "MB", "GB", "TB"]),          // disks
-  rate: (b) => unit(b, 1000, ["B/s", "kB/s", "MB/s", "GB/s"]),        // throughput
-  mbit: (b) => `${(b / 1e6).toFixed(1)} Mbit/s`,
+  gib: (b) => unit(b, 1024, ["B", "KiB", "MiB", "GiB", "TiB"]),      // RAM and disks
+  size: (b) => unit(b, 1024, ["B", "KiB", "MiB", "GiB", "TiB"]),
+  bits: (b) => unit(b, 1000, ["bps", "kbps", "Mbps", "Gbps"]),        // bits per second
+  rate: (bytes) => fmt.bits(bytes * 8),                               // byte counters -> bps
+  mbit: (b) => fmt.bits(b),
   pct: (p) => `${Math.round(p)} %`,
   temp: (t) => `${t.toFixed(t >= 100 ? 0 : 1)} °C`,
   num: (n) => n.toLocaleString("en-US"),
@@ -141,6 +142,21 @@ function graph(svg, series, max) {
       { duration: 1000, easing: "linear" },
     );
   }
+}
+
+// ---------- Per-disk IO graphs (btop's IO%) ----------
+
+const IO_POINTS = 60, IO_W = 60, IO_H = 20;
+const diskHistory = {}; // disk name -> recent busy % values
+
+function ioGraph(values = []) {
+  const last = values.slice(-(IO_POINTS + 1));
+  if (last.length < 2) return `<svg class="spark" viewBox="0 0 ${IO_W} ${IO_H}" preserveAspectRatio="none"><g></g></svg>`;
+  const x = (i) => IO_W - (last.length - 1 - i) * (IO_W / (IO_POINTS - 1));
+  const y = (v) => IO_H - Math.min(100, v) / 100 * (IO_H - 2) - 1;
+  const pts = last.map((v, i) => `${x(i).toFixed(2)},${y(v).toFixed(2)}`).join(" ");
+  return `<svg class="spark" viewBox="0 0 ${IO_W} ${IO_H}" preserveAspectRatio="none" aria-hidden="true"><g>
+    <polygon class="area" points="${x(0).toFixed(2)},${IO_H} ${pts} ${IO_W},${IO_H}"/><polyline class="line" points="${pts}"/></g></svg>`;
 }
 
 // ---------- Graph tooltips ----------
@@ -287,7 +303,7 @@ function renderMemory(m, limits) {
     const free = Math.max(0, m.total - m.used - m.cached);
     const swapPct = m.swap_total ? (m.swap_used / m.swap_total) * 100 : 0;
     const lvl = level(m.percent, limits.usage);
-    return `<div class="stats">${stat("Used", fmt.gib(m.used), `/ ${fmt.gib(m.total)}`)}</div>
+    return `<div class="stats">${stat("Used", fmt.gib(m.used), `/ ${fmt.gib(m.total)}`, "", 14)}</div>
       <div class="bar" role="meter" aria-label="RAM" aria-valuenow="${Math.round(usedPct)}" style="margin-bottom:14px">
         <span style="width:${usedPct}%;background:${heat(usedPct)}"></span><span class="cache" style="width:${cachePct}%"></span>
       </div>
@@ -326,7 +342,7 @@ function renderNetwork(n) {
 function renderDocker(d) {
   const ok = card("docker", d, () => {
     if (!d.containers.length) return '<span class="muted">No containers</span>';
-    return `<table class="fixed"><thead><tr><th>Container</th><th class="w-status">Status</th><th class="num w-cpu">CPU</th><th class="num w-mem">RAM</th></tr></thead><tbody>
+    return `<table class="fixed"><thead><tr><th>Container</th><th class="w-status">Status</th><th class="num w-cpu" title="100 % = one full CPU thread">CPU</th><th class="num w-mem">RAM</th></tr></thead><tbody>
       ${d.containers.map((c) => {
         const lvl = c.state === "running" ? (c.status.includes("unhealthy") ? "warn" : "ok") : "crit";
         const label = c.status.includes("unhealthy") ? "unhealthy" : c.state;
@@ -352,34 +368,51 @@ function renderStorage(pool, disks, limits) {
     </div>`;
   });
 
+  for (const d of disks.items || []) push(diskHistory[d.name] ||= [], d.busy ?? 0);
+
   card("disks", disks, () => {
     if (!disks.items.length) return '<span class="muted">No disks found</span>';
-    const smart = (v) => (v === true ? `<span class="pill lvl-ok">OK</span>`
-      : v === false ? `<span class="pill lvl-crit">FAILED</span>` : NA());
-    return `<table class="disks fixed"><thead><tr>
-        <th class="w-disk">Disk</th><th>Used</th><th class="num w-size">Size</th><th class="num w-temp">Temp</th>
-        <th class="num w-read">Read</th><th class="num w-hours">Power-on</th><th class="w-smart">SMART</th>
-      </tr></thead><tbody>
-      ${disks.items.map((d) => {
-        const lvl = d.percent != null ? level(d.percent, limits.usage) : "ok";
-        const tl = d.temp != null ? level(d.temp, limits.disk_temp) : "ok";
-        return `<tr>
-          <td class="name"><div>${esc(d.name)}</div><div class="model">${esc(d.model || "")}</div></td>
-          <td class="use" data-label="Used">${d.used != null
-            ? `${fmt.size(d.used)} / ${fmt.size(d.total)} · ${fmt.pct(d.percent)}${flag(lvl)}${bar(d.percent)}`
-            : NA("not mounted")}</td>
-          <td class="num" data-label="Size">${d.size ? fmt.size(d.size) : NA()}</td>
-          <td class="num" data-label="Temp">${d.temp != null ? `${hot(tempHeat(d.temp, limits.disk_temp), `${d.temp} °C`)}${flag(tl)}` : NA()}</td>
-          <td class="num" data-label="Read">${d.read != null ? fmt.rate(d.read) : NA()}</td>
-          <td class="num" data-label="Power-on hours">${d.hours != null ? `${fmt.num(d.hours)} h` : NA()}</td>
-          <td data-label="SMART">${smart(d.smart)}</td></tr>`;
-      }).join("")}</tbody></table>`;
+    return `<div class="disk-list">${disks.items.map((d) => {
+      const tl = d.temp != null ? level(d.temp, limits.disk_temp) : "ok";
+      const smart = d.smart === false ? `<span class="pill lvl-crit">FAILED</span>`
+        : d.smart === true && d.bad > 0 ? `<span class="pill lvl-warn" title="${esc(d.bad_detail)}">${fmt.num(d.bad)} BAD</span>`
+        : d.smart === true ? `<span class="pill lvl-ok">SMART OK</span>` : `<span class="muted">no SMART</span>`;
+      const mounted = d.used != null;
+      const free = mounted ? d.total - d.used : 0;
+      return `<div class="disk">
+        <div class="disk-head">
+          <span class="disk-name">${esc(d.name)}</span><span class="model">${esc(d.model || "")}</span>
+          <span class="facts">
+            <span title="Temperature">${d.temp != null ? `${hot(tempHeat(d.temp, limits.disk_temp), `${d.temp} °C`)}${flag(tl)}` : '<span class="muted">– °C</span>'}</span>
+            <span title="Power-on hours">${d.hours != null ? `${fmt.num(d.hours)} h` : '<span class="muted">– h</span>'}</span>
+            <span title="Size">${d.size ? fmt.size(d.size) : "–"}</span>
+            ${smart}
+          </span>
+        </div>
+        <div class="meter" title="IO: how busy the disk is (100 % = it can't do more), last 60 s.
+Read ${fmt.rate(d.read || 0)} · Write ${fmt.rate(d.write || 0)}">
+          <span class="k">IO</span>${ioGraph(diskHistory[d.name])}
+          <span class="pct">${d.busy != null ? hot(d.busy, `${Math.round(d.busy)} %`) : "–"}</span><span class="v"></span>
+        </div>
+        <div class="meter two">
+          <span class="k">Used</span>${mounted ? bar(d.percent) : '<span class="muted">not mounted</span>'}
+          <span class="pct">${mounted ? hot(d.percent, fmt.pct(d.percent)) : ""}</span>
+          <span class="v">${mounted ? `<span class="uf"><span>${fmt.size(d.used)}</span><span class="muted">${fmt.size(free)} free</span></span>` : ""}</span>
+        </div>
+      </div>`;
+    }).join("")}</div>`;
   });
+  // Scroll the IO graphs smoothly, like the big graphs.
+  if (!reduceMotion) {
+    for (const g of document.querySelectorAll("#disks .spark g")) {
+      g.animate([{ transform: `translateX(${IO_W / (IO_POINTS - 1)}px)` }, { transform: "translateX(0)" }], { duration: 1000, easing: "linear" });
+    }
+  }
 }
 
 function renderProcesses(p) {
-  card("processes", p, () => `<table><thead><tr>
-      <th>Name</th><th class="w-user">User</th><th class="num w-cpu">CPU</th><th class="num w-pct">RAM</th></tr></thead><tbody>
+  card("processes", p, () => `<table class="fixed"><thead><tr>
+      <th>Name</th><th class="w-user">User</th><th class="num w-cpu" title="100 % = one full CPU thread">CPU</th><th class="num w-pct">RAM</th></tr></thead><tbody>
     ${p.items.map((x) => `<tr><td class="name" title="PID ${x.pid}">${esc(x.name)}</td>
       <td class="muted ellipsis">${esc(x.user ?? "–")}</td>
       <td class="num">${hot(x.cpu, `${x.cpu.toFixed(1)} %`)}</td>
@@ -397,7 +430,9 @@ function renderJellyfin(j) {
       return `<div class="stream">
         <div class="title">${s.paused ? "❚❚ " : ""}${esc(s.title)}</div>
         <div class="info"><span>${esc(s.user)} · ${esc(s.device)}</span>
-          <span>${method} ${s.bitrate ? fmt.mbit(s.bitrate) : ""}</span></div>
+          <span>${method} <span class="bitrate">${s.bitrate ? fmt.mbit(s.bitrate) : ""}</span></span></div>
+        ${s.progress != null ? `<div class="progress" title="${s.progress} % watched"><span style="width:${s.progress}%"></span></div>` : ""}
+        ${s.reason ? `<div class="reason">Transcoding: ${esc(s.reason)}</div>` : ""}
       </div>`;
     }).join("")}</div>`;
   });
@@ -410,7 +445,8 @@ function renderMinecraft(m) {
     return `<div class="mc">
       <span class="pill lvl-${lvl}">${m.online ? "Online" : "Offline"}</span>
       ${m.online ? `<span class="big">${m.players}<small class="muted"> / ${m.max}</small></span><span class="muted">players</span>` : ""}
-    </div>${m.online && m.version ? `<div class="muted" style="margin-top:10px">Version ${esc(m.version)}</div>` : ""}`;
+    </div>${m.online && m.names && m.names.length ? `<div class="names">${m.names.map((n) => `<span class="pill">${esc(n)}</span>`).join("")}</div>` : ""}
+    ${m.online && m.version ? `<div class="muted" style="margin-top:10px">Version ${esc(m.version)}</div>` : ""}`;
   });
 }
 

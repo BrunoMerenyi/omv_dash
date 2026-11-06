@@ -263,12 +263,6 @@ table.fixed .name { max-width: none; width: auto; }
 .w-mem { width: 88px; }
 .w-user { width: 92px; }
 .w-pct { width: 64px; }
-.w-disk { width: 22%; }
-.w-size { width: 84px; }
-.w-temp { width: 120px; }
-.w-read { width: 110px; }
-.w-hours { width: 100px; }
-.w-smart { width: 100px; }
 .name { max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .state { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12px; }
@@ -282,7 +276,14 @@ table.fixed .name { max-width: none; width: auto; }
 .stream { display: grid; gap: 2px; padding-top: 10px; border-top: 1px solid var(--border); }
 .stream:first-child { padding-top: 0; border-top: 0; }
 .stream .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stream .info { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+.progress { height: 3px; background: var(--track); border-radius: 2px; overflow: hidden; margin-top: 6px; }
+.progress span { display: block; height: 100%; background: var(--c); transition: width .8s ease-out; }
+.reason { font-size: 11px; color: var(--muted); }
+.names { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.stream .info { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; }
+.stream .info > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stream .info > span:last-child { white-space: nowrap; }
+.bitrate { display: inline-block; min-width: 10ch; text-align: right; }
 
 .mc { display: flex; align-items: center; gap: 16px; }
 .mc .big { font-size: 28px; font-weight: 600; }
@@ -293,24 +294,40 @@ table.fixed .name { max-width: none; width: auto; }
 .pool .value { font-size: 20px; font-weight: 600; }
 .pool .bar { height: 8px; }
 
-.disks td { padding-top: 8px; padding-bottom: 8px; }
-.disks .model { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.disks .use { min-width: 160px; }
-.disks .use .bar { margin-top: 4px; }
+/* One block per disk, like btop's disk panel: name line, IO% history, Used, Free.
+   Every number has a fixed-width slot and every row a fixed height, so nothing
+   moves when values change. */
+.disk-list { display: grid; }
+.disk { display: grid; gap: 4px; padding: 12px 0; border-top: 1px solid var(--border); }
+.disk:first-child { border-top: 0; padding-top: 0; }
+.disk:last-child { padding-bottom: 0; }
 
-@media (max-width: 899px) {
-  /* Table rows become small cards on narrow screens. */
-  .disks thead { display: none; }
-  .disks, .disks tbody, .disks tr, .disks td { display: block; width: auto; max-width: none; }
-  .disks tr { border-top: 1px solid var(--border); padding: 10px 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 12px; }
-  .disks td { border: 0; padding: 0; text-align: left; }
-  .disks td.name, .disks td.use { grid-column: 1 / -1; width: auto; max-width: none; }
-  .disks td[data-label]::before {
-    content: attr(data-label); display: block;
-    color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
-  }
+.disk-head { display: flex; align-items: center; gap: 4px 12px; height: 24px; }
+.disk-name { font-weight: 600; white-space: nowrap; }
+.disk-head .model { flex: 1; min-width: 0; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.facts { display: grid; grid-template-columns: 12ch 11ch 10ch 13ch; column-gap: 12px; align-items: center; justify-items: end; white-space: nowrap; font-size: 12px; }
+.facts .muted { font-size: 11px; }
+
+.meter { display: grid; grid-template-columns: 5ch minmax(0, 1fr) 6ch 30ch; gap: 12px; align-items: center; height: 20px; font-size: 12px; white-space: nowrap; }
+.meter .k { color: var(--muted); }
+.meter .pct, .meter .v { text-align: right; }
+.meter .v { overflow: hidden; }
+.uf { display: inline-grid; grid-template-columns: 11ch 16ch; gap: 8px; text-align: right; }
+.spark { display: block; width: 100%; height: 20px; overflow: hidden; border-bottom: 1px dotted var(--border); }
+.spark .line { fill: none; stroke: url(#io-heat); stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.spark .area { fill: url(#io-heat); opacity: .18; }
+
+@media (max-width: 719px) {
+  .meter { grid-template-columns: 5ch minmax(0, 1fr) 6ch; gap: 8px; }
+  .meter > .v:empty { display: none; }
   .pool { grid-template-columns: 1fr auto; }
   .pool .bar { grid-column: 1 / -1; grid-row: 2; }
+  /* Phones: the facts always get their own line, and used/free always sits
+     under the bar, so line breaks never depend on the numbers. */
+  .disk-head { flex-wrap: wrap; height: 46px; align-content: space-between; }
+  .facts { width: 100%; grid-template-columns: repeat(4, 1fr); justify-items: start; }
+  .meter.two { grid-template-columns: 5ch minmax(0, 1fr) 6ch; grid-template-rows: 20px 18px; height: 42px; gap: 0 8px; }
+  .meter.two .v { grid-column: 1 / -1; }
 }
 
 /* Respect "reduce motion": no sliding bars (graphs skip their animation in app.js). */

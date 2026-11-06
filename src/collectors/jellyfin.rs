@@ -44,9 +44,32 @@ pub fn streams(sessions: &Value) -> Vec<Value> {
                 "method": method,
                 "bitrate": transcoding["Bitrate"].as_u64().or_else(|| source_bitrate(item)),
                 "paused": s["PlayState"]["IsPaused"].as_bool().unwrap_or(false),
+                "progress": progress(s),
+                "reason": transcoding["TranscodeReasons"].as_array().map(|reasons| {
+                    reasons.iter().filter_map(Value::as_str).map(words).collect::<Vec<_>>().join(", ")
+                }),
             })
         })
         .collect()
+}
+
+/// How far into the item the stream is, in percent.
+fn progress(session: &Value) -> Option<f64> {
+    let position = session["PlayState"]["PositionTicks"].as_f64()?;
+    let length = session["NowPlayingItem"]["RunTimeTicks"].as_f64().filter(|&l| l > 0.0)?;
+    Some((position / length * 1000.0).round().clamp(0.0, 1000.0) / 10.0)
+}
+
+/// "AudioCodecNotSupported" -> "audio codec not supported".
+fn words(code: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in code.chars().enumerate() {
+        if c.is_uppercase() && i > 0 {
+            out.push(' ');
+        }
+        out.extend(c.to_lowercase());
+    }
+    out
 }
 
 fn title(item: &Value) -> String {
@@ -76,8 +99,9 @@ mod tests {
              "NowPlayingItem": {"SeriesName": "Severance", "ParentIndexNumber": 2, "IndexNumber": 3,
                                 "MediaStreams": [{"Type": "Video", "BitRate": 18000000}]},
              "PlayState": {"PlayMethod": "DirectPlay"}},
-            {"UserName": "luca", "DeviceName": "Firefox", "NowPlayingItem": {"Name": "Dune"},
-             "PlayState": {"PlayMethod": "Transcode"}, "TranscodingInfo": {"Bitrate": 8000000}},
+            {"UserName": "luca", "DeviceName": "Firefox", "NowPlayingItem": {"Name": "Dune", "RunTimeTicks": 1000},
+             "PlayState": {"PlayMethod": "Transcode", "PositionTicks": 250},
+             "TranscodingInfo": {"Bitrate": 8000000, "TranscodeReasons": ["AudioCodecNotSupported"]}},
             {"UserName": "idle", "DeviceName": "Phone"}
         ]);
         let s = streams(&sessions);
@@ -86,5 +110,7 @@ mod tests {
         assert_eq!(s[0]["bitrate"], 18000000);
         assert_eq!(s[1]["method"], "Transcode");
         assert_eq!(s[1]["bitrate"], 8000000);
+        assert_eq!(s[1]["progress"], 25.0);
+        assert_eq!(s[1]["reason"], "audio codec not supported");
     }
 }

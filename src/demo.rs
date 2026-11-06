@@ -55,6 +55,7 @@ pub struct Demo {
     net_up: Walk,
     disk_read: Walk,
     players: Walk,
+    watched: f64, // demo stream progress
     load: [Walk; 3],
     containers: Vec<(&'static str, &'static str, &'static str, Option<Walk>, f64)>,
     processes: Vec<(u32, &'static str, &'static str, Walk, f64)>,
@@ -85,6 +86,7 @@ impl Default for Demo {
             net_up: walk(1.8e6, 0.1e6, 9e6, 0.6e6),
             disk_read: walk(2.4e6, 0.8e6, 6e6, 0.4e6),
             players: walk(3.0, 0.0, 8.0, 0.15),
+            watched: 0.0,
             load: [walk(3.2, 1.5, 9.0, 0.25), walk(2.9, 1.8, 6.0, 0.08), walk(2.6, 2.0, 4.0, 0.03)],
             containers: vec![
                 ("jellyfin", "running", "Up 6 days", Some(walk(38.0, 12.0, 160.0, 15.0)), 1.42 * GIB),
@@ -123,12 +125,16 @@ impl Demo {
             .map(|&(name, model, size, used, temp, hours)| {
                 let busy = name == "sdc"; // the disk Jellyfin is reading from
                 let idle_read = if rng.unit() < 0.25 { rng.range(5e4, 4e5) } else { 0.0 };
+                let write = if rng.unit() < 0.3 { rng.range(2e4, 9e5) } else { 0.0 };
+                let busy_pct = if busy { rng.range(18.0, 34.0) } else { (idle_read + write) / 2e5 };
                 json!({
                     "name": name, "model": model, "size": size, "total": size, "used": used,
                     "percent": (used / size * 1000.0).round() / 10.0,
                     "temp": temp + if busy { 2 } else { 0 } + (rng.unit() < 0.25) as i64,
-                    "read": if busy { busy_read } else { idle_read },
-                    "hours": hours, "smart": true,
+                    "read": if name == "sdc" { busy_read } else { idle_read },
+                    "write": write.round(),
+                    "busy": (busy_pct * 10.0).round() / 10.0,
+                    "hours": hours, "smart": true, "bad": 0, "bad_detail": "",
                 })
             })
             .collect();
@@ -157,6 +163,9 @@ impl Demo {
         processes.sort_by(|a, b| b["cpu"].as_f64().unwrap_or(0.0).total_cmp(&a["cpu"].as_f64().unwrap_or(0.0)));
 
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        self.watched = (self.watched + 0.05) % 100.0;
+        let players = self.players.next(rng).round() as usize;
+        let names = ["Steve", "Alex", "bruno", "anna", "luca", "Notch_fan", "creeper99", "mia"];
         json!({
             "host": { "hostname": "openmediavault", "ip": "192.168.1.20", "uptime": now - self.boot },
             "cpu": {
@@ -192,10 +201,12 @@ impl Demo {
             "docker": { "ok": true, "containers": containers },
             "processes": { "ok": true, "items": processes },
             "jellyfin": { "ok": true, "streams": [
-                { "user": "anna", "title": "Severance · S02E03", "device": "Apple TV", "method": "DirectPlay", "bitrate": 18_400_000, "paused": false },
-                { "user": "luca", "title": "Dune: Part Two", "device": "Firefox", "method": "Transcode", "bitrate": 8_000_000, "paused": false },
+                { "user": "anna", "title": "Severance · S02E03", "device": "Apple TV", "method": "DirectPlay", "bitrate": 18_400_000, "paused": false,
+                  "progress": ((42.0 + self.watched) % 100.0 * 10.0).round() / 10.0, "reason": null },
+                { "user": "luca", "title": "Dune: Part Two", "device": "Firefox", "method": "Transcode", "bitrate": 8_000_000, "paused": false,
+                  "progress": ((71.0 + self.watched) % 100.0 * 10.0).round() / 10.0, "reason": "audio codec not supported" },
             ]},
-            "minecraft": { "ok": true, "online": true, "players": self.players.next(rng).round(), "max": 20, "version": "1.21.4" },
+            "minecraft": { "ok": true, "online": true, "players": players, "names": &names[..players], "max": 20, "version": "1.21.4" },
         })
     }
 }

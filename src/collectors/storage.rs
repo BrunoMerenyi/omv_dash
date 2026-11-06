@@ -26,7 +26,7 @@ struct Disk {
 pub struct Storage {
     disks: Vec<Disk>,
     found_at: Option<Instant>,
-    reads: Rate,
+    rates: Rate,
 }
 
 pub fn pool(config: &Config) -> Res<Value> {
@@ -67,7 +67,7 @@ impl Storage {
                 .collect();
             self.found_at = Some(Instant::now());
         }
-        let sectors_read = sectors_read();
+        let stats = disk_stats();
         let items: Vec<Value> = self
             .disks
             .iter()
@@ -79,9 +79,14 @@ impl Storage {
                     "size": d.size,
                     "total": null, "used": null, "percent": null,
                     "temp": temps.get(&d.name).copied().map(Value::from).unwrap_or_else(|| info["temp"].clone()),
-                    "read": sectors_read.get(&d.name).map(|&s| self.reads.per_second(&d.name, s * 512)),
+                    "read": stats.get(&d.name).map(|s| self.rates.per_second(&format!("{}:r", d.name), s.read * 512).round()),
+                    "write": stats.get(&d.name).map(|s| self.rates.per_second(&format!("{}:w", d.name), s.written * 512).round()),
+                    // Like btop's IO%: share of the last second the disk was busy (100 % = it can't do more).
+                    "busy": stats.get(&d.name).map(|s| round1((self.rates.per_second(&format!("{}:b", d.name), s.busy_ms) / 10.0).min(100.0))),
                     "hours": info["hours"],
                     "smart": info["passed"],
+                    "bad": info["bad"],
+                    "bad_detail": info["bad_detail"],
                 });
                 if let Some((total, used, _, percent)) = d.mount.as_deref().and_then(|m| usage(m).ok()) {
                     item["total"] = total.into();
@@ -110,14 +115,22 @@ pub fn usage(path: &str) -> Res<(u64, u64, u64, f64)> {
     Ok((blocks * unit, used, free, percent))
 }
 
-/// Sectors read per disk from /proc/diskstats (6th column).
-fn sectors_read() -> HashMap<String, u64> {
+/// Ever-growing counters per disk from /proc/diskstats.
+struct DiskStats {
+    read: u64,    // sectors read
+    written: u64, // sectors written
+    busy_ms: u64, // milliseconds spent doing I/O
+}
+
+fn disk_stats() -> HashMap<String, DiskStats> {
     read("/proc/diskstats")
         .unwrap_or_default()
         .lines()
         .filter_map(|l| {
-            let f: Vec<&str> = l.split_whitespace().collect();
-            Some((f.get(2)?.to_string(), f.get(5)?.parse().ok()?))
+            // major minor name reads merged SECTORS_READ ms writes merged SECTORS_WRITTEN ms in_flight BUSY_MS …
+            let f: Vec<u64> = l.split_whitespace().map(|x| x.parse().unwrap_or(0)).collect();
+            let name = l.split_whitespace().nth(2)?.to_string();
+            Some((name, DiskStats { read: *f.get(5)?, written: *f.get(9)?, busy_ms: *f.get(12)? }))
         })
         .collect()
 }

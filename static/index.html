@@ -112,6 +112,12 @@
     </section>
   </main>
 
+  <!-- Shared colour gradient for the per-disk IO graphs: green at the bottom, red at the top -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs><linearGradient id="io-heat" gradientUnits="userSpaceOnUse" x1="0" y1="20" x2="0" y2="0">
+      <stop offset="0" stop-color="hsl(130 70% 65%)"/><stop offset=".5" stop-color="hsl(65 70% 65%)"/><stop offset="1" stop-color="hsl(0 70% 65%)"/>
+    </linearGradient></defs>
+  </svg>
   <script src="app.js"></script>
 </body>
 </html>

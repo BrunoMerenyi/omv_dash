@@ -82,6 +82,9 @@ pub fn collect(config: &Config) -> Res<Value> {
         Ok(status) => json!({
             "online": true,
             "players": status["players"]["online"].as_u64().unwrap_or(0),
+            "names": status["players"]["sample"].as_array().map(|sample| {
+                sample.iter().filter_map(|p| p["name"].as_str()).collect::<Vec<_>>()
+            }),
             "max": status["players"]["max"],
             "version": status["version"]["name"],
         }),

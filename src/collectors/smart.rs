@@ -34,13 +34,29 @@ impl Smart {
     }
 }
 
-/// smartctl's JSON -> {"passed", "hours", "temp"}. None if the disk was asleep.
+/// smartctl's JSON -> {"passed", "hours", "temp", "bad", "bad_detail"}.
+/// None if the disk was asleep.
 pub fn parse(data: &Value) -> Option<Value> {
     let passed = data.get("smart_status")?.get("passed")?.as_bool()?;
+    // Bad sectors usually start rising weeks before a disk fails.
+    let attribute = |id: u64| -> Option<u64> {
+        let table = data["ata_smart_attributes"]["table"].as_array()?;
+        table.iter().find(|a| a["id"] == id)?["raw"]["value"].as_u64()
+    };
+    let counts = [
+        ("reallocated", attribute(5)),
+        ("pending", attribute(197)),
+        ("uncorrectable", attribute(198)),
+        ("media errors", data["nvme_smart_health_information_log"]["media_errors"].as_u64()),
+    ];
+    let known: Vec<(&str, u64)> = counts.iter().filter_map(|&(name, n)| Some((name, n?))).collect();
+    let detail: Vec<String> = known.iter().filter(|(_, n)| *n > 0).map(|(name, n)| format!("{n} {name}")).collect();
     Some(json!({
         "passed": passed,
         "hours": data["power_on_time"]["hours"],
         "temp": data["temperature"]["current"],
+        "bad": if known.is_empty() { None } else { Some(known.iter().map(|(_, n)| n).sum::<u64>()) },
+        "bad_detail": detail.join(", "),
     }))
 }
 
@@ -50,8 +66,9 @@ mod tests {
 
     #[test]
     fn parses_smartctl_json_and_skips_sleeping_disks() {
-        let awake = json!({"smart_status": {"passed": true}, "power_on_time": {"hours": 21430}, "temperature": {"current": 36}});
-        assert_eq!(parse(&awake), Some(json!({"passed": true, "hours": 21430, "temp": 36})));
+        let awake = json!({"smart_status": {"passed": true}, "power_on_time": {"hours": 21430}, "temperature": {"current": 36},
+            "ata_smart_attributes": {"table": [{"id": 5, "raw": {"value": 8}}, {"id": 197, "raw": {"value": 2}}, {"id": 198, "raw": {"value": 0}}]}});
+        assert_eq!(parse(&awake), Some(json!({"passed": true, "hours": 21430, "temp": 36, "bad": 10, "bad_detail": "8 reallocated, 2 pending"})));
         assert_eq!(parse(&json!({"smartctl": {"exit_status": 2}})), None);
     }
 }
