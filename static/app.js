@@ -439,7 +439,16 @@ function connect() {
     $("grid").classList.remove("stale");
   };
   ws.onmessage = (event) => {
-    try { render(JSON.parse(event.data)); } catch (err) { console.error(err); }
+    try {
+      const data = JSON.parse(event.data);
+      if (data.history) {
+        // First message: the last 2 minutes, kept by the server, so graphs start full.
+        for (const key of ["cpu", "down", "up"]) history[key] = data.history[key].slice(-(HISTORY + 1));
+        netMax = 0;
+        return;
+      }
+      render(data);
+    } catch (err) { console.error(err); }
   };
   ws.onclose = () => {
     $("conn").textContent = "○ Disconnected – reconnecting …";

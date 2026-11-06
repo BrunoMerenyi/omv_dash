@@ -1,10 +1,8 @@
 # Secrets: never commit
 .env
 
-# Local Python environment and caches
-.venv/
-__pycache__/
-.pytest_cache/
+# Rust build output
+/target/
 
 # Build output (image archives are large, rebuild them instead)
 dist/

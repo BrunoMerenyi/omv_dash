@@ -1,33 +1,33 @@
 services:
-  dashboard:
-    image: nas-dashboard:latest
-    pull_policy: never            # built on the Mac and loaded with `docker load`
+  nas-dashboard:
+    image: ghcr.io/brunomerenyi/omv_dash:latest
+    pull_policy: always                         # update with: docker compose up -d
     container_name: nas-dashboard
-    restart: unless-stopped
-    env_file: .env
-
-    # See the host's real network interfaces and IP, and reach Jellyfin and
-    # Minecraft on 127.0.0.1. Port 6767 is opened directly on the NAS (LAN).
-    network_mode: host
-    # See host processes for the "Processes" card (read-only: the container
-    # user is unprivileged and cannot signal or change them).
-    pid: host
-
-    # Hardening: no Linux capabilities, no privilege escalation, read-only image.
+    network_mode: host                          # real network stats and IP; serves port 6767
+    pid: host                                   # process list (read-only)
+    environment:
+      JELLYFIN_API_KEY: ""                      # optional: Jellyfin → Dashboard → API Keys
+      MC_HOST: ""                               # optional: Minecraft Java server, e.g. 127.0.0.1
+    read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    read_only: true
-    tmpfs: [/tmp]
-
-    # Lets the unprivileged user (uid 10001) open the Docker socket.
-    group_add: ["${DOCKER_GID:-999}"]
-
     volumes:
-      # Note: ":ro" stops the socket *file* being changed, not API calls.
-      # The dashboard itself only sends GET requests (see README).
+      - /srv:/srv:ro,rslave                     # pool and disk usage
+      - /var/lib/nas-dashboard/smart:/smart:ro  # SMART data (optional, see README)
+    restart: unless-stopped
+
+  # Read-only window into Docker: only "list containers" and "container stats"
+  # get through. The dashboard itself never touches the Docker socket.
+  docker-proxy:
+    image: wollomatic/socket-proxy:1
+    container_name: docker-proxy
+    network_mode: host                          # listens on 127.0.0.1:2375 only
+    command: [-loglevel=WARN, '-allowGET=^/containers/(json|[0-9a-f]{64}/stats)$$']
+    user: "65534:999"                           # ← 999: your docker group, see README
+    environment: [GOMEMLIMIT=4MiB]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      # Pool and disk mounts, read-only. rslave: disks mounted later still appear.
-      - /srv:/srv:ro,rslave
-      # SMART JSON files written by the host timer (README, SMART option A).
-      # Stays empty, and harmless, until the timer is set up.
-      - /var/lib/nas-dashboard/smart:/smart:ro
+    restart: unless-stopped
