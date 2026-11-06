@@ -1,0 +1,33 @@
+services:
+  dashboard:
+    image: nas-dashboard:latest
+    pull_policy: never            # built on the Mac and loaded with `docker load`
+    container_name: nas-dashboard
+    restart: unless-stopped
+    env_file: .env
+
+    # See the host's real network interfaces and IP, and reach Jellyfin and
+    # Minecraft on 127.0.0.1. Port 6767 is opened directly on the NAS (LAN).
+    network_mode: host
+    # See host processes for the "Processes" card (read-only: the container
+    # user is unprivileged and cannot signal or change them).
+    pid: host
+
+    # Hardening: no Linux capabilities, no privilege escalation, read-only image.
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+
+    # Lets the unprivileged user (uid 10001) open the Docker socket.
+    group_add: ["${DOCKER_GID:-999}"]
+
+    volumes:
+      # Note: ":ro" stops the socket *file* being changed, not API calls.
+      # The dashboard itself only sends GET requests (see README).
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Pool and disk mounts, read-only. rslave: disks mounted later still appear.
+      - /srv:/srv:ro,rslave
+      # SMART JSON files written by the host timer (README, SMART option A).
+      # Stays empty, and harmless, until the timer is set up.
+      - /var/lib/nas-dashboard/smart:/smart:ro

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#000000">
+  <title>OMV Dashboard</title>
+  <link rel="preload" href="fonts/JetBrainsMono.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1 id="title"></h1>
+      <span id="demo" class="tag" hidden>DEMO</span>
+    </div>
+    <dl class="meta">
+      <div><dt>IP</dt><dd id="ip">–</dd></div>
+      <div><dt>Uptime</dt><dd id="uptime">–</dd></div>
+    </dl>
+    <div class="status-wrap">
+      <div id="status" class="status" role="status" aria-live="polite">–</div>
+      <div id="conn" class="conn">Connecting …</div>
+    </div>
+  </header>
+
+  <main id="grid" class="grid">
+    <section class="card span-cpu c-cpu" aria-labelledby="h-cpu">
+      <header>
+        <h2 id="h-cpu">CPU</h2>
+        <span class="aside" id="cpu-model"></span>
+      </header>
+      <div id="cpu"></div>
+      <div class="graph">
+        <svg id="cpu-graph" viewBox="0 0 300 60" preserveAspectRatio="none" role="img" aria-label="CPU usage, last 2 minutes"></svg>
+        <span class="graph-caption">Total · last 2 min</span>
+        <span class="graph-label">100 %</span>
+      </div>
+      <div id="threads" class="threads"></div>
+    </section>
+
+    <section class="card span-temps c-temps" aria-labelledby="h-temps">
+      <header>
+        <h2 id="h-temps">Temperatures</h2>
+      </header>
+      <div id="temps"></div>
+    </section>
+
+    <section class="card span-mem c-mem" aria-labelledby="h-mem">
+      <header>
+        <h2 id="h-mem">RAM</h2>
+      </header>
+      <div id="memory"></div>
+    </section>
+
+    <section class="card span-net c-net" aria-labelledby="h-net">
+      <header>
+        <h2 id="h-net">Network</h2>
+        <span class="aside" id="net-iface"></span>
+      </header>
+      <div id="network"></div>
+      <div class="graph grow">
+        <svg id="net-graph" viewBox="0 0 300 60" preserveAspectRatio="none" role="img" aria-label="Network traffic, last 2 minutes"></svg>
+        <span class="graph-caption">Last 2 min</span>
+        <span class="graph-label" id="net-scale"></span>
+      </div>
+      <div class="legend">
+        <span><i class="line line-down"></i>Download</span>
+        <span><i class="line line-up"></i>Upload</span>
+      </div>
+    </section>
+
+    <section class="card span-docker c-docker" aria-labelledby="h-docker">
+      <header>
+        <h2 id="h-docker">Docker</h2>
+        <span class="aside" id="docker-count"></span>
+      </header>
+      <div id="docker"></div>
+    </section>
+
+    <section class="card span-full c-storage" aria-labelledby="h-storage">
+      <header>
+        <h2 id="h-storage">Storage</h2>
+        <span class="aside" id="pool-path"></span>
+      </header>
+      <div id="pool"></div>
+      <div id="disks"></div>
+    </section>
+
+    <section class="card span-third c-proc" aria-labelledby="h-proc">
+      <header>
+        <h2 id="h-proc">Processes</h2>
+        <span class="aside">by CPU</span>
+      </header>
+      <div id="processes"></div>
+    </section>
+
+    <section class="card span-third c-jf" aria-labelledby="h-jf">
+      <header>
+        <h2 id="h-jf">Jellyfin</h2>
+        <span class="aside" id="jf-count"></span>
+      </header>
+      <div id="jellyfin"></div>
+    </section>
+
+    <section class="card span-third c-mc" aria-labelledby="h-mc">
+      <header>
+        <h2 id="h-mc">Minecraft</h2>
+      </header>
+      <div id="minecraft"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

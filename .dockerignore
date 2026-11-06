@@ -1,0 +1,9 @@
+.venv
+.claude
+.env
+.pytest_cache
+**/__pycache__
+tests
+*.tar
+*.tar.gz
+dist

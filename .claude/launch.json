@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard-demo",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["DEMO_MODE=true", ".venv/bin/python", "-m", "app.main"],
+      "port": 6767
+    },
+    {
+      "name": "dashboard-real",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["PORT=8081", ".venv/bin/python", "-m", "app.main"],
+      "port": 8081
+    }
+  ]
+}
